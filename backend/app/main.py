@@ -1,4 +1,5 @@
-import os, shutil, subprocess, tempfile, zipfile, math, json, re
+import os, shutil, subprocess, tempfile, zipfile, math, json, re, asyncio, threading, uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
@@ -47,8 +48,7 @@ def make_srt(segments, path: Path):
             clean = str(text).replace("-->", "→").strip()
             f.write(f"{idx}\n{stamp(start)} --> {stamp(max(start + .15, end))}\n{clean}\n\n")
 
-@app.post("/api/shorts")
-async def shorts(
+async def _process_shorts(
     file: UploadFile = File(...),
     captions_enabled: bool = Form(True),
     caption_language: str = Form("original"),
@@ -135,3 +135,118 @@ async def shorts(
         raise HTTPException(500, "Processing failed: " + str(exc)[:400]) from exc
     finally:
         await file.close()
+
+
+# Lightweight in-process background job queue. Jobs continue after the browser request returns.
+# For multi-instance production deployments, replace this with Redis/Celery or a durable queue.
+JOB_ROOT = Path(os.getenv("JOB_STORAGE_DIR", tempfile.gettempdir())) / "drama-shorts-jobs"
+JOB_ROOT.mkdir(parents=True, exist_ok=True)
+JOBS = {}
+JOBS_LOCK = threading.Lock()
+WORKERS = ThreadPoolExecutor(max_workers=max(1, int(os.getenv("VIDEO_WORKERS", "1"))))
+
+def _run_job(job_id: str, source_path: Path, options: dict):
+    job_dir = JOB_ROOT / job_id
+    with JOBS_LOCK:
+        JOBS[job_id]["status"] = "processing"
+        JOBS[job_id]["message"] = "Video is processing in the background."
+    try:
+        with source_path.open("rb") as handle:
+            upload = UploadFile(filename=source_path.name, file=handle)
+            response = asyncio.run(_process_shorts(
+                file=upload,
+                captions_enabled=options["captions_enabled"],
+                caption_language=options["caption_language"],
+                caption_style=options["caption_style"],
+                caption_color=options["caption_color"],
+                caption_size=options["caption_size"]
+            ))
+            if not isinstance(response, FileResponse):
+                raise RuntimeError("Video processor did not return a ZIP file.")
+            zip_path = job_dir / "drama-entertainment-shorts.zip"
+            shutil.copyfile(response.path, zip_path)
+            if response.background:
+                task = response.background()
+                if asyncio.iscoroutine(task):
+                    asyncio.run(task)
+        with JOBS_LOCK:
+            JOBS[job_id]["status"] = "completed"
+            JOBS[job_id]["message"] = "Your ZIP is ready to download."
+            JOBS[job_id]["download_url"] = f"/api/jobs/{job_id}/download"
+    except Exception as exc:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        with JOBS_LOCK:
+            if job_id in JOBS:
+                JOBS[job_id]["status"] = "failed"
+                JOBS[job_id]["message"] = str(exc)[:700]
+    finally:
+        source_path.unlink(missing_ok=True)
+
+@app.post("/api/jobs", status_code=202)
+async def create_background_job(
+    file: UploadFile = File(...),
+    captions_enabled: bool = Form(True),
+    caption_language: str = Form("original"),
+    caption_style: str = Form("auto"),
+    caption_color: str = Form("white"),
+    caption_size: str = Form("medium")
+):
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
+        raise HTTPException(415, "Upload MP4, MOV, MKV, WEBM or M4V.")
+    if caption_language not in {"original", "english", "hindi"} or caption_style not in {"auto", "classic", "bold", "minimal"} or caption_color not in {"white", "yellow", "cyan", "pink"} or caption_size not in {"small", "medium", "large"}:
+        raise HTTPException(400, "Invalid caption setting.")
+    job_id = uuid.uuid4().hex
+    job_dir = JOB_ROOT / job_id
+    job_dir.mkdir(parents=True, exist_ok=False)
+    source_path = job_dir / ("upload" + ext)
+    size = 0
+    try:
+        with source_path.open("wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > 2 * 1024**3:
+                    raise HTTPException(413, "Maximum upload size is 2 GB.")
+                out.write(chunk)
+        if not size:
+            raise HTTPException(400, "Empty video.")
+    except Exception:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    finally:
+        await file.close()
+    options = {
+        "captions_enabled": captions_enabled,
+        "caption_language": caption_language,
+        "caption_style": caption_style,
+        "caption_color": caption_color,
+        "caption_size": caption_size,
+    }
+    with JOBS_LOCK:
+        JOBS[job_id] = {"status": "queued", "message": "Upload received. Waiting for a processing worker.", "download_url": None}
+    WORKERS.submit(_run_job, job_id, source_path, options)
+    return {"job_id": job_id, "status": "queued", "message": "Upload complete. Processing will continue in the background.", "status_url": f"/api/jobs/{job_id}"}
+
+@app.get("/api/jobs/{job_id}")
+def get_background_job(job_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(404, "Job not found. Jobs are stored in memory and may be lost if the backend restarts.")
+        return {"job_id": job_id, **job}
+
+@app.get("/api/jobs/{job_id}/download")
+def download_background_job(job_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(404, "Job not found. The backend may have restarted.")
+        if job["status"] != "completed":
+            raise HTTPException(409, "The ZIP is not ready yet.")
+    zip_path = JOB_ROOT / job_id / "drama-entertainment-shorts.zip"
+    if not zip_path.is_file():
+        raise HTTPException(404, "Generated ZIP is no longer available.")
+    return FileResponse(str(zip_path), media_type="application/zip", filename="drama-entertainment-shorts.zip")
