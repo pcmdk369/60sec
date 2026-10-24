@@ -32,4 +32,4 @@ jobs:
       - name: Smoke-test FastAPI app import and routes
         env:
           PYTHONPATH: backend
-        run: python -c "from app.main import app; paths = {route.path for route in app.routes}; assert '/health' in paths and '/api/shorts' in paths, paths; print('FastAPI import and required routes OK')"
+        run: python -c "from app.main import app; paths = {route.path for route in app.routes}; assert '/health' in paths and '/api/jobs' in paths and '/api/jobs/{job_id}' in paths and '/api/jobs/{job_id}/download' in paths, paths; print('FastAPI import and background job routes OK')"
