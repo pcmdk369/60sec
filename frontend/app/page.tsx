@@ -1,26 +1,87 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
+
+const MAX_SIZE = 2 * 1024 * 1024 * 1024;
+const ACCEPTED = [".mp4", ".mov", ".mkv", ".webm", ".m4v"];
 
 export default function Home() {
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState("");
   const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [apiState, setApiState] = useState<"checking" | "online" | "offline">("checking");
+
+  const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+
+  async function checkBackend() {
+    setApiState("checking");
+    try {
+      const response = await fetch(`${apiBase}/health`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Backend unavailable");
+      setApiState("online");
+    } catch {
+      setApiState("offline");
+    }
+  }
+
+  useEffect(() => { void checkBackend(); }, []);
+
+  useEffect(() => {
+    if (!file) { setPreview(""); return; }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  function chooseFile(next: File | undefined) {
+    setError("");
+    setMessage("");
+    if (!next) return;
+    const ext = next.name.slice(next.name.lastIndexOf(".")).toLowerCase();
+    if (!ACCEPTED.includes(ext)) {
+      setFile(null);
+      setError("Unsupported file. Choose MP4, MOV, MKV, WEBM or M4V.");
+      return;
+    }
+    if (next.size > MAX_SIZE) {
+      setFile(null);
+      setError("This file is larger than the 2 GB application limit.");
+      return;
+    }
+    if (next.size === 0) {
+      setFile(null);
+      setError("This file is empty. Choose another video.");
+      return;
+    }
+    setFile(next);
+  }
+
+  function onInputChange(event: ChangeEvent<HTMLInputElement>) {
+    chooseFile(event.target.files?.[0]);
+    event.target.value = "";
+  }
+
+  function onDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDragging(false);
+    chooseFile(event.dataTransfer.files?.[0]);
+  }
 
   async function processVideo() {
     if (!file || busy) return;
-    setBusy(true); setError(""); setMessage("Uploading and processing video. Please wait…");
+    setBusy(true);
+    setError("");
+    setMessage("Preparing upload… keep this page open while your clips are created.");
     const form = new FormData();
     form.append("file", file);
     try {
-      const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
-      const response = await fetch(`${apiBase}/api/shorts`, {
-        method: "POST", body: form
-      });
+      const response = await fetch(`${apiBase}/api/shorts`, { method: "POST", body: form });
       if (!response.ok) {
-        let detail = "Processing failed.";
+        let detail = "Processing failed. Please try again.";
         try { detail = (await response.json()).detail || detail; } catch {}
         throw new Error(detail);
       }
@@ -29,41 +90,99 @@ export default function Home() {
       const a = document.createElement("a");
       a.href = url;
       a.download = "drama-entertainment-shorts.zip";
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
-      setMessage("Done. ZIP download started.");
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setMessage("Your ZIP is ready. The download should start automatically.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not connect to the backend.");
+      setError(e instanceof Error ? e.message : "Could not connect to the video-processing backend.");
       setMessage("");
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+      void checkBackend();
+    }
   }
 
+  const sizeLabel = (bytes: number) => bytes >= 1024 ** 3
+    ? `${(bytes / 1024 ** 3).toFixed(2)} GB`
+    : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+
   return (
-    <main className="page">
-      <header><div className="logo">D<span>&</span>E</div><div><b>DRAMA & ENTERTAINMENT</b><small>SHORTS CUTTER</small></div><span className="status">LOCAL TOOL</span></header>
+    <main className="app-shell">
+      <div className="ambient ambient-one" />
+      <div className="ambient ambient-two" />
+      <header className="topbar">
+        <a className="brand" href="#" aria-label="Drama Shorts home">
+          <span className="brand-mark"><span>DE</span><i /></span>
+          <span className="brand-copy"><strong>FRAME<span>FLOW</span></strong><small>DRAMA & ENTERTAINMENT</small></span>
+        </a>
+        <div className="topbar-right">
+          <span className={`connection ${apiState}`}><i />{apiState === "online" ? "PROCESSOR ONLINE" : apiState === "checking" ? "CHECKING SERVER" : "SERVER OFFLINE"}</span>
+          <button className="icon-button" onClick={() => void checkBackend()} title="Check backend connection" aria-label="Refresh backend connection">↻</button>
+        </div>
+      </header>
+
       <section className="hero">
-        <p className="eyebrow">VIDEO UTILITY / 01</p>
-        <h1>One long video.<br/><em>60-second shorts.</em></h1>
-        <p className="subtitle">Cut. Crop to vertical. Watermark. Download all clips in one ZIP.</p>
-        <div className="upload">
-          <div className="uploadIcon">↑</div>
-          <h2>{file ? file.name : "Drop in your video"}</h2>
-          <p>{file ? `${(file.size / 1048576).toFixed(1)} MB` : "MP4, MOV, MKV, WEBM or M4V · Max 2 GB"}</p>
-          <input ref={input} type="file" accept="video/*,.mkv,.m4v" hidden onChange={e => {setFile(e.target.files?.[0] || null);setError("");setMessage("");}}/>
-          <button className="secondary" onClick={() => input.current?.click()} disabled={busy}>Choose video</button>
+        <div className="hero-copy">
+          <div className="overline"><span className="overline-line" /> CREATOR TOOLKIT <span className="overline-number">01 / VIDEO</span></div>
+          <h1>Your story.<br /><span>Shorter. Sharper.</span></h1>
+          <p className="hero-description">Turn long-form drama into scroll-stopping vertical clips. Clean cuts, cinematic framing, consistent branding — all in one export.</p>
+          <div className="hero-pills"><span><b>01</b> CUT</span><span><b>02</b> CROP</span><span><b>03</b> EXPORT</span></div>
         </div>
-        <div className="settings">
-          <div><span>CLIP DURATION</span><b>60 seconds</b></div>
-          <div><span>OUTPUT FORMAT</span><b>Vertical 9:16 · 1080×1920</b></div>
-          <div><span>WATERMARK</span><b>Drama & Entertainment · Bottom-right</b></div>
-          <div><span>EXPORT</span><b>MP4 clips · One ZIP</b></div>
+        <div className="hero-art" aria-label="Decorative vertical video preview">
+          <div className="art-orbit orbit-a" /><div className="art-orbit orbit-b" />
+          <div className="art-card art-back"><span>FRAME / 02</span><div className="art-lines" /></div>
+          <div className="art-card art-front"><div className="art-play">▶</div><span className="art-caption">EVERY SECOND<br /><b>MATTERS.</b></span><span className="art-timestamp">00:60 <i /> 9:16</span></div>
+          <div className="art-tag"><span className="sparkle">✳</span><span>MADE FOR<br /><b>THE FEED</b></span></div>
         </div>
-        <button className="primary" onClick={processVideo} disabled={!file || busy}>{busy ? "PROCESSING…" : "CREATE SHORTS  ↗"}</button>
-        {message && <p className="message">{message}</p>}
-        {error && <p className="error">{error}</p>}
-        <p className="note">Only fixed-duration cutting and vertical cropping. No AI, scene detection, or captions.</p>
       </section>
-      <footer>PCMDK369™ <span>DRAMA & ENTERTAINMENT · 2026</span></footer>
+
+      <section className="workspace">
+        <div className="section-heading"><div><span className="section-kicker">WORKSPACE / 01</span><h2>Create your shorts</h2></div><span className="private-tag"><i /> YOUR FILE STAYS IN YOUR WORKFLOW</span></div>
+        <div className="workspace-grid">
+          <div className="panel upload-panel">
+            <div className="panel-heading"><span className="step-number">01</span><div><h3>Source video</h3><p>Choose a file to get started</p></div></div>
+            <input ref={input} className="file-input" type="file" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.m4v" onChange={onInputChange} />
+            {!file ? (
+              <div className={`dropzone ${dragging ? "dragging" : ""}`}
+                onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={onDrop}
+                onClick={() => input.current?.click()}
+                onKeyDown={e => { if (e.key === "Enter" || e.key === " ") input.current?.click(); }}
+                role="button" tabIndex={0} aria-label="Choose or drop a video">
+                <div className="upload-symbol"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15v4h14v-4" /></svg></div>
+                <strong>Drop your video here</strong><span>or <b>browse files</b> from your device</span>
+                <div className="file-badges"><span>MP4</span><span>MOV</span><span>MKV</span><span>WEBM</span></div>
+              </div>
+            ) : (
+              <div className="selected-file">
+                <video className="video-preview" src={preview} controls playsInline />
+                <div className="file-info"><span className="file-icon">▶</span><div className="file-name"><strong>{file.name}</strong><small>{sizeLabel(file.size)} · Video selected</small></div><button className="remove-file" onClick={() => { setFile(null); setError(""); setMessage(""); }} disabled={busy} aria-label="Remove selected video">×</button></div>
+                <button className="replace-button" onClick={() => input.current?.click()} disabled={busy}>Replace video</button>
+              </div>
+            )}
+            <div className="upload-foot"><span><i className="shield-icon">✓</i> Max file size: 2 GB</span><span>MP4 recommended</span></div>
+          </div>
+
+          <div className="panel settings-panel">
+            <div className="panel-heading"><span className="step-number">02</span><div><h3>Output settings</h3><p>Processing preset</p></div></div>
+            <div className="setting-block"><label>CLIP LENGTH</label><div className="setting-value"><span className="setting-icon">◷</span><div><strong>60 seconds</strong><small>Fixed-duration segments</small></div><span className="fixed-badge">FIXED</span></div></div>
+            <div className="setting-block"><label>VIDEO FORMAT</label><div className="setting-value"><span className="setting-icon">▯</span><div><strong>Vertical 9:16</strong><small>1080 × 1920 · Full HD</small></div><span className="format-preview">9:16</span></div></div>
+            <div className="setting-block"><label>WATERMARK</label><div className="setting-value"><span className="setting-icon">✳</span><div><strong>Drama & Entertainment</strong><small>Bottom-right · White text</small></div><span className="check-mark">✓</span></div></div>
+            <div className="setting-block"><label>EXPORT PACKAGE</label><div className="setting-value"><span className="setting-icon">▤</span><div><strong>MP4 clips in one ZIP</strong><small>Ready to download</small></div><span className="zip-badge">ZIP</span></div></div>
+            <div className="settings-note"><span>i</span><p>Each clip is up to 60 seconds. The final clip can be shorter. Original audio is kept when available.</p></div>
+          </div>
+        </div>
+        <div className="action-row"><div className="action-hint"><span className="live-dot" />{file ? `Ready to process · ${sizeLabel(file.size)}` : "Select a video to enable processing"}</div><button className="create-button" onClick={processVideo} disabled={!file || busy}><span>{busy ? "PROCESSING VIDEO…" : "CREATE SHORTS"}</span><b>{busy ? <span className="spinner" /> : "↗"}</b></button></div>
+        {message && <div className="notice success-notice" role="status"><span>✓</span><p>{message}</p></div>}
+        {error && <div className="notice error-notice" role="alert"><span>!</span><p>{error}</p></div>}
+        {apiState === "offline" && <div className="notice error-notice" role="status"><span>!</span><p>Video processor is unreachable. Start the FastAPI backend or configure NEXT_PUBLIC_API_URL to its public address, then tap refresh.</p></div>}
+      </section>
+
+      <section className="steps-section"><div className="section-heading"><div><span className="section-kicker">SIMPLE BY DESIGN</span><h2>From long to ready-to-post</h2></div></div><div className="steps-grid"><article><span className="step-art">↥</span><div><small>STEP 01</small><h3>Upload</h3><p>Select your source video from your device.</p></div></article><article><span className="step-art">◫</span><div><small>STEP 02</small><h3>Auto process</h3><p>60-second cuts, vertical crop and watermark.</p></div></article><article><span className="step-art">↓</span><div><small>STEP 03</small><h3>Download</h3><p>Get all MP4 clips together in one ZIP file.</p></div></article></div></section>
+      <footer className="footer"><a className="footer-brand" href="#">FRAMEFLOW<span> / SHORTS CUTTER</span></a><span>BUILT FOR CREATORS <i /> PCMDK369™ © 2026</span></footer>
     </main>
   );
 }
