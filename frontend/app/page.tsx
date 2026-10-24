@@ -10,6 +10,9 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState("");
   const [busy, setBusy] = useState(false);
+  const [activeJob, setActiveJob] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState("");
+  const [jobMessage, setJobMessage] = useState("");
   const [dragging, setDragging] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -34,6 +37,51 @@ export default function Home() {
   }
 
   useEffect(() => { void checkBackend(); }, []);
+
+  useEffect(() => {
+    if (!activeJob) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const poll = async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/jobs/${activeJob}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Could not retrieve background job status.");
+        const job = await response.json();
+        if (stopped) return;
+        setJobStatus(job.status || "processing");
+        setJobMessage(job.message || "Processing in the background…");
+        if (job.status === "completed") {
+          stopped = true;
+          if (timer) clearInterval(timer);
+          const a = document.createElement("a");
+          a.href = `${apiBase}/api/jobs/${activeJob}/download`;
+          a.download = "drama-entertainment-shorts.zip";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setMessage("Processing completed in the background. Your ZIP download has started.");
+          setActiveJob(null);
+          setBusy(false);
+        } else if (job.status === "failed") {
+          stopped = true;
+          if (timer) clearInterval(timer);
+          setError(job.message || "Background processing failed.");
+          setMessage("");
+          setActiveJob(null);
+          setBusy(false);
+        }
+      } catch (e) {
+        if (stopped) return;
+        setJobMessage(e instanceof Error ? e.message : "Waiting for the backend status…");
+      }
+    };
+    void poll();
+    timer = setInterval(() => { void poll(); }, 3000);
+    return () => {
+      stopped = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [activeJob, apiBase]);
 
   useEffect(() => {
     if (!file) { setPreview(""); return; }
@@ -77,10 +125,12 @@ export default function Home() {
   }
 
   async function processVideo() {
-    if (!file || busy) return;
+    if (!file || busy || activeJob) return;
     setBusy(true);
     setError("");
-    setMessage("Preparing upload… keep this page open while your clips are created.");
+    setMessage("");
+    setJobStatus("uploading");
+    setJobMessage("Uploading your video to the background processor…");
     const form = new FormData();
     form.append("file", file);
     form.append("captions_enabled", String(captionsEnabled));
@@ -89,27 +139,23 @@ export default function Home() {
     form.append("caption_color", captionColor);
     form.append("caption_size", captionSize);
     try {
-      const response = await fetch(`${apiBase}/api/shorts`, { method: "POST", body: form });
+      const response = await fetch(`${apiBase}/api/jobs`, { method: "POST", body: form });
       if (!response.ok) {
-        let detail = "Processing failed. Please try again.";
+        let detail = "Could not queue the video for processing.";
         try { detail = (await response.json()).detail || detail; } catch {}
         throw new Error(detail);
       }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "drama-entertainment-shorts.zip";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      setMessage("Your ZIP is ready. The download should start automatically.");
+      const job = await response.json();
+      setActiveJob(job.job_id);
+      setJobStatus(job.status || "queued");
+      setJobMessage(job.message || "Your video is queued. You can use another tab while it processes.");
+      setMessage("Upload complete. Video processing is now running in the background.");
+      setFile(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not connect to the video-processing backend.");
-      setMessage("");
-    } finally {
+      setJobMessage("");
       setBusy(false);
+    } finally {
       void checkBackend();
     }
   }
@@ -197,8 +243,9 @@ export default function Home() {
           <div className="caption-preview"><span className="preview-label">LIVE STYLE PREVIEW</span><span className={`caption-sample sample-${captionColor} sample-${captionSize} sample-${captionStyle === "auto" ? "bold" : captionStyle}`}>Your story, your words.</span><small>Auto recommendation optimizes readability for vertical video.</small></div>
           <div className="emergency-note"><strong>Emergency LLM fallback</strong><p>Optional server-side LLM is called only if local caption translation fails and a translation is requested. No API key is exposed to the browser. Configure <code>LLM_API_KEY</code>, <code>LLM_API_URL</code>, and <code>LLM_MODEL_ID</code> in the backend host environment.</p></div>
         </div>
-        <div className="action-row"><div className="action-hint"><span className="live-dot" />{file ? `Ready to process · ${sizeLabel(file.size)}` : "Select a video to enable processing"}</div><button className="create-button" onClick={processVideo} disabled={!file || busy}><span>{busy ? "PROCESSING VIDEO…" : "CREATE SHORTS"}</span><b>{busy ? <span className="spinner" /> : "↗"}</b></button></div>
+        <div className="action-row"><div className="action-hint"><span className="live-dot" />{file ? `Ready to process · ${sizeLabel(file.size)}` : "Select a video to enable processing"}</div><button className="create-button" onClick={processVideo} disabled={!file || busy || Boolean(activeJob)}><span>{busy ? "STARTING BACKGROUND JOB…" : activeJob ? "PROCESSING IN BACKGROUND…" : "CREATE SHORTS"}</span><b>{busy ? <span className="spinner" /> : "↗"}</b></button></div>
         {message && <div className="notice success-notice" role="status"><span>✓</span><p>{message}</p></div>}
+        {(activeJob || jobStatus === "completed") && <div className="notice success-notice" role="status"><span>↻</span><p><strong>Background job: {jobStatus}</strong><br />{jobMessage || "Processing is running on the server. Keep this page open to receive the automatic download."}</p></div>
         {error && <div className="notice error-notice" role="alert"><span>!</span><p>{error}</p></div>}
         {apiState === "offline" && <div className="notice error-notice" role="status"><span>!</span><p>Video processor is unreachable. Start the FastAPI backend or configure NEXT_PUBLIC_API_URL to its public address, then tap refresh.</p></div>}
       </section>
