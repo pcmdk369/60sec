@@ -16,7 +16,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "captions": "local-faster-whisper", "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID"))}
+    return {"status": "ok", "captions": "local-faster-whisper", "watermark": "Drama & Entertainment", "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID"))}
 
 def emergency_translate(text: str, target: str) -> str:
     """One optional OpenAI-compatible LLM call, only as fallback for local translation failure."""
@@ -89,8 +89,6 @@ async def shorts(
                 segments = [(float(s.start), float(s.end), s.text.strip()) for s in recognized if s.text.strip()]
                 if not segments: raise RuntimeError("No speech was detected. Try another video or turn captions off.")
                 if caption_language == "hindi" and (info.language or "").lower() not in {"hi", "ur"}:
-                    # This is the only condition that may invoke the optional LLM: local recognition succeeded,
-                    # but local Whisper cannot translate non-Hindi speech into Hindi.
                     translated = emergency_translate([s[2] for s in segments], "Hindi")
                     segments = [(s[0], s[1], translated[i]) for i, s in enumerate(segments)]
             except HTTPException:
@@ -99,6 +97,10 @@ async def shorts(
                 raise HTTPException(422, "Automatic captions failed: " + str(exc)[:500] + ". Check backend dependencies/model download, or disable captions.") from exc
 
         clips = work / "clips"; clips.mkdir()
+        # Use a text file so punctuation such as '&' is passed literally to FFmpeg.
+        watermark_file = work / "watermark.txt"
+        watermark_file.write_text("Drama & Entertainment", encoding="utf-8")
+        watermark_path = str(watermark_file).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
         count = max(1, math.ceil(duration / 60))
         color = {"white": "&H00FFFFFF", "yellow": "&H0000FFFF", "cyan": "&H00FFFF00", "pink": "&H00C0A0FF"}[caption_color]
         size_px = {"small": 42, "medium": 54, "large": 66}[caption_size]
@@ -116,7 +118,8 @@ async def shorts(
                 escaped = str(srt).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
                 style = f"FontName=Arial,FontSize={size_px},PrimaryColour={color},OutlineColour=&H000000,BorderStyle=1,Outline={outline},Shadow=1,Alignment=2,MarginV=140"
                 filters.append(f"subtitles='{escaped}':force_style='{style}'")
-            filters.append("drawtext=text='Drama & Entertainment':fontcolor=white:fontsize=42:box=1:boxcolor=black@0.55:boxborderw=14:x=w-tw-44:y=h-th-54")
+            # Permanent, visible lower-right watermark on every exported clip.
+            filters.append(f"drawtext=textfile='{watermark_path}':fontcolor=white:fontsize=42:box=1:boxcolor=black@0.60:boxborderw=14:x=w-tw-44:y=h-th-54")
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-i", str(source), "-t", str(length), "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters), "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(output)]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode: raise HTTPException(422, "FFmpeg error: " + result.stderr[-1000:])
