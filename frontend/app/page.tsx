@@ -14,6 +14,11 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [apiState, setApiState] = useState<"checking" | "online" | "offline">("checking");
+  const [captionLanguage, setCaptionLanguage] = useState("original");
+  const [captionStyle, setCaptionStyle] = useState("auto");
+  const [captionColor, setCaptionColor] = useState("white");
+  const [captionSize, setCaptionSize] = useState("medium");
+  const [captionsEnabled, setCaptionsEnabled] = useState(true);
 
   const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 
@@ -78,6 +83,11 @@ export default function Home() {
     setMessage("Preparing upload… keep this page open while your clips are created.");
     const form = new FormData();
     form.append("file", file);
+    form.append("captions_enabled", String(captionsEnabled));
+    form.append("caption_language", captionLanguage);
+    form.append("caption_style", captionStyle);
+    form.append("caption_color", captionColor);
+    form.append("caption_size", captionSize);
     try {
       const response = await fetch(`${apiBase}/api/shorts`, { method: "POST", body: form });
       if (!response.ok) {
@@ -174,6 +184,18 @@ export default function Home() {
             <div className="setting-block"><label>EXPORT PACKAGE</label><div className="setting-value"><span className="setting-icon">▤</span><div><strong>MP4 clips in one ZIP</strong><small>Ready to download</small></div><span className="zip-badge">ZIP</span></div></div>
             <div className="settings-note"><span>i</span><p>Each clip is up to 60 seconds. The final clip can be shorter. Original audio is kept when available.</p></div>
           </div>
+        </div>
+        <div className="panel captions-panel">
+          <div className="panel-heading"><span className="step-number">03</span><div><h3>Automatic captions</h3><p>Speech-to-text captions, styled and burned into each clip</p></div></div>
+          <label className="caption-toggle"><input type="checkbox" checked={captionsEnabled} onChange={e => setCaptionsEnabled(e.target.checked)} /><span className="toggle-track" /><span><strong>Generate captions automatically</strong><small>Local speech recognition · no LLM used for routine processing</small></span></label>
+          <div className="caption-controls">
+            <label>CAPTION LANGUAGE<select value={captionLanguage} onChange={e => setCaptionLanguage(e.target.value)} disabled={!captionsEnabled}><option value="original">Original spoken language</option><option value="english">English</option><option value="hindi">Hindi</option></select></label>
+            <label>TEMPLATE<select value={captionStyle} onChange={e => setCaptionStyle(e.target.value)} disabled={!captionsEnabled}><option value="auto">Auto recommend</option><option value="classic">Classic subtitle</option><option value="bold">Bold creator</option><option value="minimal">Minimal clean</option></select></label>
+            <label>TEXT COLOR<select value={captionColor} onChange={e => setCaptionColor(e.target.value)} disabled={!captionsEnabled}><option value="white">White</option><option value="yellow">Yellow</option><option value="cyan">Cyan</option><option value="pink">Pink</option></select></label>
+            <label>TEXT SIZE<select value={captionSize} onChange={e => setCaptionSize(e.target.value)} disabled={!captionsEnabled}><option value="small">Small</option><option value="medium">Medium · recommended</option><option value="large">Large</option></select></label>
+          </div>
+          <div className="caption-preview"><span className="preview-label">LIVE STYLE PREVIEW</span><span className={`caption-sample sample-${captionColor} sample-${captionSize} sample-${captionStyle === "auto" ? "bold" : captionStyle}`}>Your story, your words.</span><small>Auto recommendation optimizes readability for vertical video.</small></div>
+          <div className="emergency-note"><strong>Emergency LLM fallback</strong><p>Optional server-side LLM is called only if local caption translation fails and a translation is requested. No API key is exposed to the browser. Configure <code>LLM_API_KEY</code>, <code>LLM_API_URL</code>, and <code>LLM_MODEL_ID</code> in the backend host environment.</p></div>
         </div>
         <div className="action-row"><div className="action-hint"><span className="live-dot" />{file ? `Ready to process · ${sizeLabel(file.size)}` : "Select a video to enable processing"}</div><button className="create-button" onClick={processVideo} disabled={!file || busy}><span>{busy ? "PROCESSING VIDEO…" : "CREATE SHORTS"}</span><b>{busy ? <span className="spinner" /> : "↗"}</b></button></div>
         {message && <div className="notice success-notice" role="status"><span>✓</span><p>{message}</p></div>}
