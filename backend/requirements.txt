@@ -1,1 +1,4 @@
-fastapi\nuvicorn[standard]\npython-multipart\nfaster-whisper>=1.1.0\n
+fastapi
+uvicorn[standard]
+python-multipart
+faster-whisper>=1.1.0
