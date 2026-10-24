@@ -22,6 +22,9 @@ export default function Home() {
   const [captionColor, setCaptionColor] = useState("white");
   const [captionSize, setCaptionSize] = useState("medium");
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
+  const [outputResolution, setOutputResolution] = useState("1080p");
+  const [encodingPriority, setEncodingPriority] = useState("balanced");
+  const [framing, setFraming] = useState("portrait");
 
   const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 
@@ -138,6 +141,9 @@ export default function Home() {
     form.append("caption_style", captionStyle);
     form.append("caption_color", captionColor);
     form.append("caption_size", captionSize);
+    form.append("output_resolution", outputResolution);
+    form.append("encoding_priority", encodingPriority);
+    form.append("framing", framing);
     try {
       const response = await fetch(`${apiBase}/api/jobs`, { method: "POST", body: form });
       if (!response.ok) {
@@ -225,7 +231,9 @@ export default function Home() {
           <div className="panel settings-panel">
             <div className="panel-heading"><span className="step-number">02</span><div><h3>Output settings</h3><p>Processing preset</p></div></div>
             <div className="setting-block"><label>CLIP LENGTH</label><div className="setting-value"><span className="setting-icon">◷</span><div><strong>60 seconds</strong><small>Fixed-duration segments</small></div><span className="fixed-badge">FIXED</span></div></div>
-            <div className="setting-block"><label>VIDEO FORMAT</label><div className="setting-value"><span className="setting-icon">▯</span><div><strong>Vertical 9:16</strong><small>1080 × 1920 · Full HD</small></div><span className="format-preview">9:16</span></div></div>
+            <div className="setting-block"><label>OUTPUT RESOLUTION</label><div className="setting-value"><span className="setting-icon">▯</span><div><strong>Video resolution</strong><small>Choose output size</small></div><select aria-label="Output resolution" value={outputResolution} onChange={e => setOutputResolution(e.target.value)}><option value="480p">480p</option><option value="720p">720p HD</option><option value="1080p">1080p Full HD</option><option value="2160p">2160p 4K</option></select></div></div>
+            <div className="setting-block"><label>ENCODING PRIORITY</label><div className="setting-value"><span className="setting-icon">◴</span><div><strong>Quality and speed</strong><small>Controls FFmpeg encoder profile</small></div><select aria-label="Encoding priority" value={encodingPriority} onChange={e => setEncodingPriority(e.target.value)}><option value="fast">Fast</option><option value="balanced">Balanced</option><option value="quality">High quality</option></select></div></div>
+            <div className="setting-block"><label>FRAMING</label><div className="setting-value"><span className="setting-icon">▣</span><div><strong>{framing === "portrait" ? "Fill vertical 9:16" : "Preserve full frame"}</strong><small>{framing === "portrait" ? "Crop edges to fill the frame" : "Fit video with black padding"}</small></div><select aria-label="Video framing" value={framing} onChange={e => setFraming(e.target.value)}><option value="portrait">Portrait crop</option><option value="pad">Preserve full frame</option></select></div></div>
             <div className="setting-block"><label>WATERMARK</label><div className="setting-value"><span className="setting-icon">✳</span><div><strong>Drama & Entertainment</strong><small>Bottom-right · White text</small></div><span className="check-mark">✓</span></div></div>
             <div className="setting-block"><label>EXPORT PACKAGE</label><div className="setting-value"><span className="setting-icon">▤</span><div><strong>MP4 clips in one ZIP</strong><small>Ready to download</small></div><span className="zip-badge">ZIP</span></div></div>
             <div className="settings-note"><span>i</span><p>Each clip is up to 60 seconds. The final clip can be shorter. Original audio is kept when available.</p></div>
