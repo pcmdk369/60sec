@@ -1,6 +1,6 @@
 # Drama & Entertainment Shorts Cutter
 
-Next.js frontend + FastAPI video processor. Upload a video to cut it into up-to-60-second vertical 9:16 clips (1080×1920), add the watermark, optionally generate automatic captions, and download all MP4 clips as one ZIP.
+Next.js frontend + FastAPI video processor. Upload a video, then let the server process it in the background into up-to-60-second vertical 9:16 clips (1080×1920), with a permanent watermark and optional automatic captions. The website polls job status and starts the ZIP download when ready.
 
 ## Requirements
 - Node.js 20+
@@ -27,7 +27,7 @@ npm run dev
 ```
 Open http://localhost:3000. Health check: http://127.0.0.1:8000/health.
 
-## Caption options
+## Background processing\n- The browser uploads the video and receives a job ID; the backend returns immediately after upload rather than holding the request open for the entire encode.\n- The UI polls the job status every 3 seconds and automatically downloads the ZIP when the job completes. You can switch to another browser tab while processing.\n- The initial queue is in-process and stores job status/files on the backend instance temporary disk. It is suitable for a single Render web service/instance only: a backend restart/redeploy can lose active job status or temporary files, and multiple instances will not share jobs. For durable production use, add Redis/Celery or a managed queue plus persistent object storage (for example Supabase Storage or S3).\n- Set `VIDEO_WORKERS=1` initially to limit memory/CPU use. Increasing workers can overload small instances, especially with Whisper enabled.\n- Keep the page open if you want the automatic download. If you close it, the backend continues the job while the service remains running, but this initial version does not provide a persistent job dashboard after a page reload.\n\n## Caption options
 - **Original**: transcribe speech in its detected language.
 - **English**: use local Whisper speech translation to English.
 - **Hindi**: if the speech is already Hindi/Urdu, use local recognition; if not, the optional emergency LLM fallback can translate the recognized segments into Hindi.
