@@ -245,7 +245,7 @@ export default function Home() {
         </div>
         <div className="action-row"><div className="action-hint"><span className="live-dot" />{file ? `Ready to process · ${sizeLabel(file.size)}` : "Select a video to enable processing"}</div><button className="create-button" onClick={processVideo} disabled={!file || busy || Boolean(activeJob)}><span>{busy ? "STARTING BACKGROUND JOB…" : activeJob ? "PROCESSING IN BACKGROUND…" : "CREATE SHORTS"}</span><b>{busy ? <span className="spinner" /> : "↗"}</b></button></div>
         {message && <div className="notice success-notice" role="status"><span>✓</span><p>{message}</p></div>}
-        {(activeJob || jobStatus === "completed") && <div className="notice success-notice" role="status"><span>↻</span><p><strong>Background job: {jobStatus}</strong><br />{jobMessage || "Processing is running on the server. Keep this page open to receive the automatic download."}</p></div>
+        {(activeJob || jobStatus === "completed") && <div className="notice success-notice" role="status"><span>↻</span><p><strong>Background job: {jobStatus}</strong><br />{jobMessage || "Processing is running on the server. Keep this page open to receive the automatic download."}</p></div>}
         {error && <div className="notice error-notice" role="alert"><span>!</span><p>{error}</p></div>}
         {apiState === "offline" && <div className="notice error-notice" role="status"><span>!</span><p>Video processor is unreachable. Start the FastAPI backend or configure NEXT_PUBLIC_API_URL to its public address, then tap refresh.</p></div>}
       </section>
