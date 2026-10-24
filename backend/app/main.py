@@ -45,7 +45,7 @@ def make_srt(segments, path: Path):
     with path.open("w", encoding="utf-8") as f:
         for idx, (start, end, text) in enumerate(segments, 1):
             clean = str(text).replace("-->", "→").strip()
-            f.write(f"{idx}\\n{stamp(start)} --> {stamp(max(start + .15, end))}\\n{clean}\\n\\n")
+            f.write(f"{idx}\n{stamp(start)} --> {stamp(max(start + .15, end))}\n{clean}\n\n")
 
 @app.post("/api/shorts")
 async def shorts(
