@@ -54,13 +54,22 @@ async def _process_shorts(
     caption_language: str = Form("original"),
     caption_style: str = Form("auto"),
     caption_color: str = Form("white"),
-    caption_size: str = Form("medium")
+    caption_size: str = Form("medium"),
+    output_resolution: str = Form("1080p"),
+    encoding_priority: str = Form("balanced"),
+    framing: str = Form("portrait")
 ):
     ext = Path(file.filename or "").suffix.lower()
     if ext not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
         raise HTTPException(415, "Upload MP4, MOV, MKV, WEBM or M4V.")
     if caption_language not in {"original", "english", "hindi"} or caption_style not in {"auto", "classic", "bold", "minimal"} or caption_color not in {"white", "yellow", "cyan", "pink"} or caption_size not in {"small", "medium", "large"}:
         raise HTTPException(400, "Invalid caption setting.")
+    if output_resolution not in {"480p", "720p", "1080p", "2160p"} or encoding_priority not in {"fast", "balanced", "quality"} or framing not in {"portrait", "pad"}:
+        raise HTTPException(400, "Invalid video quality setting.")
+    dimensions = {"480p": (480, 854), "720p": (720, 1280), "1080p": (1080, 1920), "2160p": (2160, 3840)}
+    target_width, target_height = dimensions[output_resolution]
+    encoder_profiles = {"fast": {"preset": "veryfast", "crf": "23"}, "balanced": {"preset": "fast", "crf": "21"}, "quality": {"preset": "medium", "crf": "18"}}
+    encoder = encoder_profiles[encoding_priority]
     work = Path(tempfile.mkdtemp(prefix="drama-shorts-"))
     try:
         source = work / ("source" + ext)
@@ -110,7 +119,10 @@ async def _process_shorts(
             start = i * 60; length = min(60, duration - start)
             if length <= 0: continue
             output = clips / f"short_{i+1:03d}.mp4"
-            filters = ["scale=1080:1920:force_original_aspect_ratio=increase", "crop=1080:1920", "setsar=1"]
+            if framing == "portrait":
+                filters = [f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase", f"crop={target_width}:{target_height}", "setsar=1"]
+            else:
+                filters = [f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease", f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black", "setsar=1"]
             if captions_enabled:
                 local = [(max(0, a-start), min(length, b-start), t) for a,b,t in segments if b > start and a < start+length]
                 srt = work / f"captions_{i+1:03d}.srt"
@@ -120,7 +132,7 @@ async def _process_shorts(
                 filters.append(f"subtitles='{escaped}':force_style='{style}'")
             # Permanent, visible lower-right watermark on every exported clip.
             filters.append(f"drawtext=textfile='{watermark_path}':fontcolor=white:fontsize=42:box=1:boxcolor=black@0.60:boxborderw=14:x=w-tw-44:y=h-th-54")
-            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-i", str(source), "-t", str(length), "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters), "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(output)]
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-i", str(source), "-t", str(length), "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters), "-c:v", "libx264", "-preset", encoder["preset"], "-crf", encoder["crf"], "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(output)]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode: raise HTTPException(422, "FFmpeg error: " + result.stderr[-1000:])
         archive = work / "drama-entertainment-shorts.zip"
@@ -159,7 +171,10 @@ def _run_job(job_id: str, source_path: Path, options: dict):
                 caption_language=options["caption_language"],
                 caption_style=options["caption_style"],
                 caption_color=options["caption_color"],
-                caption_size=options["caption_size"]
+                caption_size=options["caption_size"],
+                output_resolution=options["output_resolution"],
+                encoding_priority=options["encoding_priority"],
+                framing=options["framing"]
             ))
             if not isinstance(response, FileResponse):
                 raise RuntimeError("Video processor did not return a ZIP file.")
@@ -189,13 +204,22 @@ async def create_background_job(
     caption_language: str = Form("original"),
     caption_style: str = Form("auto"),
     caption_color: str = Form("white"),
-    caption_size: str = Form("medium")
+    caption_size: str = Form("medium"),
+    output_resolution: str = Form("1080p"),
+    encoding_priority: str = Form("balanced"),
+    framing: str = Form("portrait")
 ):
     ext = Path(file.filename or "").suffix.lower()
     if ext not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
         raise HTTPException(415, "Upload MP4, MOV, MKV, WEBM or M4V.")
     if caption_language not in {"original", "english", "hindi"} or caption_style not in {"auto", "classic", "bold", "minimal"} or caption_color not in {"white", "yellow", "cyan", "pink"} or caption_size not in {"small", "medium", "large"}:
         raise HTTPException(400, "Invalid caption setting.")
+    if output_resolution not in {"480p", "720p", "1080p", "2160p"} or encoding_priority not in {"fast", "balanced", "quality"} or framing not in {"portrait", "pad"}:
+        raise HTTPException(400, "Invalid video quality setting.")
+    dimensions = {"480p": (480, 854), "720p": (720, 1280), "1080p": (1080, 1920), "2160p": (2160, 3840)}
+    target_width, target_height = dimensions[output_resolution]
+    encoder_profiles = {"fast": {"preset": "veryfast", "crf": "23"}, "balanced": {"preset": "fast", "crf": "21"}, "quality": {"preset": "medium", "crf": "18"}}
+    encoder = encoder_profiles[encoding_priority]
     job_id = uuid.uuid4().hex
     job_dir = JOB_ROOT / job_id
     job_dir.mkdir(parents=True, exist_ok=False)
@@ -224,6 +248,9 @@ async def create_background_job(
         "caption_style": caption_style,
         "caption_color": caption_color,
         "caption_size": caption_size,
+        "output_resolution": output_resolution,
+        "encoding_priority": encoding_priority,
+        "framing": framing,
     }
     with JOBS_LOCK:
         JOBS[job_id] = {"status": "queued", "message": "Upload received. Waiting for a processing worker.", "download_url": None}
