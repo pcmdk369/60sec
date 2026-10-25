@@ -1,17 +1,12 @@
 "use client";
 
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useRef, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
-import ReCAPTCHA from "react-google-recaptcha";
-import { supabase } from "../lib/supabase";
 
 const MAX_SIZE = 2 * 1024 * 1024 * 1024;
 const ACCEPTED = [".mp4", ".mov", ".mkv", ".webm", ".m4v"];
 
 export default function Home() {
   const input = useRef<HTMLInputElement>(null);
-  const captchaRef = useRef<ReCAPTCHA>(null);
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState("");
   const [busy, setBusy] = useState(false);
@@ -22,18 +17,12 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [apiState, setApiState] = useState<"checking" | "online" | "offline">("checking");
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<{ access_token: string; user: { username: string } } | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [loginEmail, setLoginEmail] = useState("");
+  const [loginUsername, setLoginUsername] = useState("Admin");
   const [loginPassword, setLoginPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
-  const [recoveryMode, setRecoveryMode] = useState(false);
-  const [newPassword, setNewPassword] = useState("");
-  const [recoveryMessage, setRecoveryMessage] = useState("");
-  const [resetBusy, setResetBusy] = useState(false);
-  const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || "").trim().toLowerCase();
-  const recaptchaSiteKey = (process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || "").trim();
   const [captionLanguage, setCaptionLanguage] = useState("original");
   const [captionStyle, setCaptionStyle] = useState("auto");
   const [captionColor, setCaptionColor] = useState("white");
@@ -59,57 +48,25 @@ export default function Home() {
   useEffect(() => { void checkBackend(); }, []);
 
   useEffect(() => {
-    const client = supabase;
-    if (!client) {
-      setAuthReady(true);
-      return;
-    }
     let mounted = true;
-    const authTimeout = window.setTimeout(() => {
-      if (!mounted) return;
-      setAuthError("Could not restore the saved session. Check your connection and sign in again.");
-      setAuthReady(true);
-    }, 8000);
-    client.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      window.clearTimeout(authTimeout);
-      const current = data.session;
-      if (current && adminEmail && (current.user.email || "").toLowerCase() !== adminEmail) {
-        setAuthError("This account is not the configured admin account.");
-        setSession(null);
-        void client.auth.signOut();
-      } else {
-        setSession(current);
-      }
-      setAuthReady(true);
-    }).catch(() => {
-      if (!mounted) return;
-      window.clearTimeout(authTimeout);
-      setSession(null);
-      setAuthError("Could not verify the saved session. Sign in again.");
-      setAuthReady(true);
-    });
-    const { data: { subscription } } = client.auth.onAuthStateChange((event, nextSession) => {
-      if (!mounted) return;
-      if (event === "PASSWORD_RECOVERY") {
-        setRecoveryMode(true);
-        setAuthError("");
-      }
-      if (nextSession && adminEmail && (nextSession.user.email || "").toLowerCase() !== adminEmail) {
-        setSession(null);
-        setAuthError("Admin access only. Use the configured owner account.");
-        void client.auth.signOut();
-      } else {
-        setSession(nextSession);
-      }
-      setAuthReady(true);
-    });
-    return () => {
-      mounted = false;
-      window.clearTimeout(authTimeout);
-      subscription.unsubscribe();
-    };
-  }, []);
+    async function restoreSession() {
+      const token = window.localStorage.getItem("frameflow_admin_token");
+      if (!token) { if (mounted) setAuthReady(true); return; }
+      try {
+        const response = await fetch(`${apiBase}/api/auth/session`, {
+          headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+        });
+        if (!response.ok) throw new Error("Session expired");
+        const data = await response.json();
+        if (mounted) setSession({ access_token: token, user: { username: data.username || "Admin" } });
+      } catch {
+        window.localStorage.removeItem("frameflow_admin_token");
+        if (mounted) setSession(null);
+      } finally { if (mounted) setAuthReady(true); }
+    }
+    void restoreSession();
+    return () => { mounted = false; };
+  }, [apiBase]);
 
   useEffect(() => {
     if (!activeJob) return;
@@ -250,129 +207,31 @@ export default function Home() {
   async function signInAdmin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAuthError("");
-    if (!supabase) {
-      setAuthError("Supabase is not configured on the Vercel frontend.");
-      return;
-    }
-    if (!adminEmail) {
-      setAuthError("Set NEXT_PUBLIC_ADMIN_EMAIL in Vercel before signing in.");
-      return;
-    }
-    if (loginEmail.trim().toLowerCase() !== adminEmail) {
-      setAuthError("Admin access only. This email is not the configured owner account.");
-      return;
-    }
-    if (!recaptchaSiteKey) {
-      setAuthError("Robot verification is not configured. Add NEXT_PUBLIC_RECAPTCHA_SITE_KEY in Vercel.");
-      return;
-    }
-    if (!captchaToken) {
-      setAuthError("Complete the robot verification checkbox before signing in.");
+    if (!loginUsername.trim() || !loginPassword) {
+      setAuthError("Enter the admin username and password.");
       return;
     }
     setAuthBusy(true);
     try {
-      const captchaResponse = await fetch(`${apiBase}/api/auth/verify-captcha`, {
+      const response = await fetch(`${apiBase}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: captchaToken }),
+        body: JSON.stringify({ username: loginUsername.trim(), password: loginPassword }),
         cache: "no-store",
       });
-      if (!captchaResponse.ok) {
-        let detail = "Robot verification failed. Please try again.";
-        try { detail = (await captchaResponse.json()).detail || detail; } catch {}
-        throw new Error(detail);
-      }
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginEmail.trim(),
-        password: loginPassword,
-      });
-      if (error || !data.session || (data.user.email || "").toLowerCase() !== adminEmail) {
-        await supabase.auth.signOut();
-        throw new Error(error?.message || "Sign-in failed. Check the admin account credentials.");
-      }
-      setSession(data.session);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Sign-in failed. Check your credentials.");
+      if (!data.access_token) throw new Error("The server did not return a valid session.");
+      window.localStorage.setItem("frameflow_admin_token", data.access_token);
+      setSession({ access_token: data.access_token, user: { username: data.username || "Admin" } });
       setLoginPassword("");
     } catch (e) {
-      setAuthError(e instanceof Error ? e.message : "Admin sign-in failed. Check the backend and Supabase settings.");
-    } finally {
-      setAuthBusy(false);
-      setCaptchaToken(null);
-      captchaRef.current?.reset();
-    }
-  }
-
-  async function sendAdminPasswordReset() {
-    setAuthError("");
-    setRecoveryMessage("");
-    if (!supabase) {
-      setAuthError("Supabase is not configured on the Vercel frontend.");
-      return;
-    }
-    if (loginEmail.trim().toLowerCase() !== adminEmail) {
-      setAuthError("Enter the configured admin email before requesting a reset.");
-      return;
-    }
-    if (!captchaToken) {
-      setAuthError("Complete the robot verification checkbox before requesting a reset.");
-      return;
-    }
-    setResetBusy(true);
-    try {
-      const captchaResponse = await fetch(`${apiBase}/api/auth/verify-captcha`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: captchaToken }),
-        cache: "no-store",
-      });
-      if (!captchaResponse.ok) {
-        let detail = "Robot verification failed. Please try again.";
-        try { detail = (await captchaResponse.json()).detail || detail; } catch {}
-        throw new Error(detail);
-      }
-      const { error } = await supabase.auth.resetPasswordForEmail(loginEmail.trim(), {
-        redirectTo: window.location.origin,
-      });
-      if (error) throw error;
-      setRecoveryMessage("Password reset email sent. Open the link in your admin inbox to choose a new password.");
-    } catch (e) {
-      setAuthError(e instanceof Error ? e.message : "Could not send the password reset email.");
-    } finally {
-      setResetBusy(false);
-      setCaptchaToken(null);
-      captchaRef.current?.reset();
-    }
-  }
-
-  async function updateAdminPassword(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setAuthError("");
-    if (!supabase) {
-      setAuthError("Supabase is not configured on the Vercel frontend.");
-      return;
-    }
-    if (newPassword.length < 12) {
-      setAuthError("Use a new password with at least 12 characters.");
-      return;
-    }
-    setResetBusy(true);
-    try {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) throw error;
-      await supabase.auth.signOut();
-      setSession(null);
-      setRecoveryMode(false);
-      setNewPassword("");
-      setRecoveryMessage("Admin password updated. Sign in with the new password.");
-    } catch (e) {
-      setAuthError(e instanceof Error ? e.message : "Could not update the admin password.");
-    } finally {
-      setResetBusy(false);
-    }
+      setAuthError(e instanceof Error ? e.message : "Admin sign-in failed. Check the backend configuration.");
+    } finally { setAuthBusy(false); }
   }
 
   async function signOutAdmin() {
-    if (supabase) await supabase.auth.signOut();
+    window.localStorage.removeItem("frameflow_admin_token");
     setSession(null);
     setFile(null);
     setActiveJob(null);
@@ -380,33 +239,11 @@ export default function Home() {
     setAuthError("");
   }
 
-
   if (!authReady) {
     return <main className="app-shell"><section className="panel" style={{ maxWidth: 520, margin: "15vh auto", padding: 28 }}><h1>Checking admin session</h1><p>Verifying your private workspace access…</p></section></main>;
   }
 
-  if (!supabase || !adminEmail) {
-    return <main className="app-shell"><section className="panel" style={{ maxWidth: 560, margin: "12vh auto", padding: 28 }}><h1>Admin setup required</h1><p>Supabase is connected in the project code, but the frontend environment variables are not complete.</p><p>Set <code>NEXT_PUBLIC_SUPABASE_URL</code>, <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>, and <code>NEXT_PUBLIC_ADMIN_EMAIL</code> in Vercel, then redeploy.</p></section></main>;
-  }
-
-  if (recoveryMode && supabase) {
-    return (
-      <main className="app-shell">
-        <section className="panel" style={{ maxWidth: 520, margin: "12vh auto", padding: 28 }}>
-          <span className="section-kicker">PRIVATE ACCESS / PASSWORD RECOVERY</span>
-          <h1 style={{ margin: "12px 0", fontSize: 30 }}>Reset admin password</h1>
-          <p style={{ color: "#a7a5bb", lineHeight: 1.7 }}>Choose a new password for the configured admin account. Use at least 12 characters.</p>
-          <form onSubmit={updateAdminPassword} style={{ display: "grid", gap: 14, marginTop: 22 }}>
-            <label style={{ display: "grid", gap: 7 }}>New password<input type="password" autoComplete="new-password" minLength={12} required value={newPassword} onChange={e => setNewPassword(e.target.value)} style={{ padding: 13, borderRadius: 8, background: "#101019", border: "1px solid #38324d", color: "#f6f4ff" }} /></label>
-            {authError && <div className="notice error-notice" role="alert"><span>!</span><p>{authError}</p></div>}
-            <button className="create-button" type="submit" disabled={resetBusy} style={{ width: "100%" }}><span>{resetBusy ? "UPDATING PASSWORD…" : "UPDATE PASSWORD"}</span><b>↗</b></button>
-          </form>
-        </section>
-      </main>
-    );
-  }
-
-  if (!session || (session.user.email || "").toLowerCase() !== adminEmail) {
+  if (!session) {
     return <main className="app-shell">
       <div className="ambient ambient-one" /><div className="ambient ambient-two" />
       <header className="topbar"><a className="brand" href="#"><span className="brand-mark"><span>DE</span><i /></span><span className="brand-copy"><strong>FRAME<span>FLOW</span></strong><small>PRIVATE ADMIN WORKSPACE</small></span></a><span className="connection offline"><i /> ADMIN LOGIN REQUIRED</span></header>
@@ -415,26 +252,10 @@ export default function Home() {
         <h1 style={{ margin: "12px 0", fontSize: 30 }}>Sign in to FrameFlow</h1>
         <p style={{ color: "#a7a5bb", lineHeight: 1.7 }}>This video-processing workspace is restricted to the configured admin account. Public visitors cannot upload, process, or download videos.</p>
         <form onSubmit={signInAdmin} style={{ display: "grid", gap: 14, marginTop: 22 }}>
-          <label style={{ display: "grid", gap: 7 }}>Admin email<input type="email" autoComplete="username" required value={loginEmail} onChange={e => setLoginEmail(e.target.value)} style={{ padding: 13, borderRadius: 8, background: "#101019", border: "1px solid #38324d", color: "#f6f4ff" }} /></label>
+          <label style={{ display: "grid", gap: 7 }}>Username<input type="text" autoComplete="username" required value={loginUsername} onChange={e => setLoginUsername(e.target.value)} style={{ padding: 13, borderRadius: 8, background: "#101019", border: "1px solid #38324d", color: "#f6f4ff" }} /></label>
           <label style={{ display: "grid", gap: 7 }}>Password<input type="password" autoComplete="current-password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} style={{ padding: 13, borderRadius: 8, background: "#101019", border: "1px solid #38324d", color: "#f6f4ff" }} /></label>
-          {recaptchaSiteKey ? (
-            <div style={{ display: "flex", justifyContent: "center", minHeight: 78, overflow: "hidden" }}>
-              <ReCAPTCHA
-                ref={captchaRef}
-                sitekey={recaptchaSiteKey}
-                theme="dark"
-                onChange={token => setCaptchaToken(token)}
-                onExpired={() => setCaptchaToken(null)}
-                onErrored={() => { setCaptchaToken(null); setAuthError("Robot verification could not load. Check the site key and network connection."); }}
-              />
-            </div>
-          ) : (
-            <div className="notice error-notice" role="alert"><span>!</span><p>Robot check setup required: add <code>NEXT_PUBLIC_RECAPTCHA_SITE_KEY</code> in Vercel and <code>RECAPTCHA_SECRET_KEY</code> in Render.</p></div>
-          )}
           {authError && <div className="notice error-notice" role="alert"><span>!</span><p>{authError}</p></div>}
-          <button className="create-button" type="submit" disabled={authBusy || !recaptchaSiteKey || !captchaToken} style={{ width: "100%" }}><span>{authBusy ? "VERIFYING ADMIN…" : "ADMIN SIGN IN"}</span><b>↗</b></button>
-          <button type="button" onClick={() => void sendAdminPasswordReset()} disabled={resetBusy || !recaptchaSiteKey || !captchaToken} style={{ justifySelf: "center", background: "transparent", border: 0, color: "#c6b6ff", padding: "8px 12px", fontSize: 12, textDecoration: "underline" }}>{resetBusy ? "SENDING RESET EMAIL…" : "Forgot admin password?"}</button>
-          {recoveryMessage && <div className="notice success-notice" role="status"><span>✓</span><p>{recoveryMessage}</p></div>}
+          <button className="create-button" type="submit" disabled={authBusy} style={{ width: "100%" }}><span>{authBusy ? "VERIFYING ADMIN…" : "ADMIN SIGN IN"}</span><b>↗</b></button>
         </form>
         <p style={{ marginTop: 18, color: "#89869f", fontSize: 11 }}>No public sign-up is available. Only the configured admin account can access the workspace.</p>
       </section>
