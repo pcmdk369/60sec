@@ -330,7 +330,7 @@ NEXT_PUBLIC_API_URL=https://your-backend.example.com
 2. Add `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` to the Vercel project environment.
 3. Add `RECAPTCHA_SECRET_KEY` as a private environment variable in Render (or sync the `render.yaml` Blueprint and enter it securely).
 4. Confirm `NEXT_PUBLIC_ADMIN_EMAIL` in Vercel and `ADMIN_EMAIL` in Render both equal `support.pcmdkai@gmail.com`.
-5. In Supabase Authentication, create or recover the admin user for that email using the password reset flow. Never commit or share the password.
+5. In Supabase Authentication, create or recover the admin user for that email using the password reset flow. Add the exact production frontend URL to Supabase Auth URL Configuration → Redirect URLs so the reset link can return to the app. Never commit or share the password.
 6. Redeploy both services after changing environment variables. The login form intentionally stays disabled until reCAPTCHA is configured and verified server-side.
 
 #### Frontend deployment
