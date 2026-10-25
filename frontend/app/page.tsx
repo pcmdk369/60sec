@@ -1,6 +1,8 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useRef, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabase";
 
 const MAX_SIZE = 2 * 1024 * 1024 * 1024;
 const ACCEPTED = [".mp4", ".mov", ".mkv", ".webm", ".m4v"];
@@ -17,6 +19,13 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [apiState, setApiState] = useState<"checking" | "online" | "offline">("checking");
+  const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || "").trim().toLowerCase();
   const [captionLanguage, setCaptionLanguage] = useState("original");
   const [captionStyle, setCaptionStyle] = useState("auto");
   const [captionColor, setCaptionColor] = useState("white");
@@ -42,12 +51,47 @@ export default function Home() {
   useEffect(() => { void checkBackend(); }, []);
 
   useEffect(() => {
+    if (!supabase) {
+      setAuthReady(true);
+      return;
+    }
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      const current = data.session;
+      if (current && adminEmail && (current.user.email || "").toLowerCase() !== adminEmail) {
+        setAuthError("This account is not the configured admin account.");
+        setSession(null);
+        void supabase.auth.signOut();
+      } else {
+        setSession(current);
+      }
+      setAuthReady(true);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!mounted) return;
+      if (nextSession && adminEmail && (nextSession.user.email || "").toLowerCase() !== adminEmail) {
+        setSession(null);
+        setAuthError("Admin access only. Use the configured owner account.");
+        void supabase.auth.signOut();
+      } else {
+        setSession(nextSession);
+      }
+      setAuthReady(true);
+    });
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!activeJob) return;
     let stopped = false;
     let timer: ReturnType<typeof setInterval> | undefined;
     const poll = async () => {
       try {
-        const response = await fetch(`${apiBase}/api/jobs/${activeJob}`, { cache: "no-store" });
+        const response = await fetch(`${apiBase}/api/jobs/${activeJob}`, { cache: "no-store", headers: { Authorization: `Bearer ${session?.access_token || ""}` } });
         if (!response.ok) throw new Error("Could not retrieve background job status.");
         const job = await response.json();
         if (stopped) return;
@@ -56,12 +100,19 @@ export default function Home() {
         if (job.status === "completed") {
           stopped = true;
           if (timer) clearInterval(timer);
+          const downloadResponse = await fetch(`${apiBase}/api/jobs/${activeJob}/download`, {
+            headers: { Authorization: `Bearer ${session?.access_token || ""}` },
+            cache: "no-store",
+          });
+          if (!downloadResponse.ok) throw new Error("Could not download the ZIP. Please sign in again and retry.");
+          const blobUrl = URL.createObjectURL(await downloadResponse.blob());
           const a = document.createElement("a");
-          a.href = `${apiBase}/api/jobs/${activeJob}/download`;
+          a.href = blobUrl;
           a.download = "drama-entertainment-shorts.zip";
           document.body.appendChild(a);
           a.click();
           a.remove();
+          URL.revokeObjectURL(blobUrl);
           setMessage("Processing completed in the background. Your ZIP download has started.");
           setActiveJob(null);
           setBusy(false);
@@ -84,7 +135,7 @@ export default function Home() {
       stopped = true;
       if (timer) clearInterval(timer);
     };
-  }, [activeJob, apiBase]);
+  }, [activeJob, apiBase, session?.access_token]);
 
   useEffect(() => {
     if (!file) { setPreview(""); return; }
@@ -128,7 +179,7 @@ export default function Home() {
   }
 
   async function processVideo() {
-    if (!file || busy || activeJob) return;
+    if (!file || busy || activeJob || !session?.access_token) return;
     setBusy(true);
     setError("");
     setMessage("");
@@ -145,7 +196,7 @@ export default function Home() {
     form.append("encoding_priority", encodingPriority);
     form.append("framing", framing);
     try {
-      const response = await fetch(`${apiBase}/api/jobs`, { method: "POST", body: form });
+      const response = await fetch(`${apiBase}/api/jobs`, { method: "POST", body: form, headers: { Authorization: `Bearer ${session.access_token}` } });
       if (!response.ok) {
         let detail = "Could not queue the video for processing.";
         try { detail = (await response.json()).detail || detail; } catch {}
@@ -170,6 +221,75 @@ export default function Home() {
     ? `${(bytes / 1024 ** 3).toFixed(2)} GB`
     : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 
+  async function signInAdmin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthError("");
+    if (!supabase) {
+      setAuthError("Supabase is not configured on the Vercel frontend.");
+      return;
+    }
+    if (!adminEmail) {
+      setAuthError("Set NEXT_PUBLIC_ADMIN_EMAIL in Vercel before signing in.");
+      return;
+    }
+    if (loginEmail.trim().toLowerCase() !== adminEmail) {
+      setAuthError("Admin access only. This email is not the configured owner account.");
+      return;
+    }
+    setAuthBusy(true);
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: loginEmail.trim(),
+      password: loginPassword,
+    });
+    if (error || !data.session || (data.user.email || "").toLowerCase() !== adminEmail) {
+      await supabase.auth.signOut();
+      setAuthError(error?.message || "Sign-in failed. Check the admin account credentials.");
+      setAuthBusy(false);
+      return;
+    }
+    setSession(data.session);
+    setLoginPassword("");
+    setAuthBusy(false);
+  }
+
+  async function signOutAdmin() {
+    if (supabase) await supabase.auth.signOut();
+    setSession(null);
+    setFile(null);
+    setActiveJob(null);
+    setBusy(false);
+    setAuthError("");
+  }
+
+
+  if (!authReady) {
+    return <main className="app-shell"><section className="panel" style={{ maxWidth: 520, margin: "15vh auto", padding: 28 }}><h1>Checking admin session</h1><p>Verifying your private workspace access…</p></section></main>;
+  }
+
+  if (!supabase || !adminEmail) {
+    return <main className="app-shell"><section className="panel" style={{ maxWidth: 560, margin: "12vh auto", padding: 28 }}><h1>Admin setup required</h1><p>Supabase is connected in the project code, but the frontend environment variables are not complete.</p><p>Set <code>NEXT_PUBLIC_SUPABASE_URL</code>, <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>, and <code>NEXT_PUBLIC_ADMIN_EMAIL</code> in Vercel, then redeploy.</p></section></main>;
+  }
+
+  if (!session || (session.user.email || "").toLowerCase() !== adminEmail) {
+    return <main className="app-shell">
+      <div className="ambient ambient-one" /><div className="ambient ambient-two" />
+      <header className="topbar"><a className="brand" href="#"><span className="brand-mark"><span>DE</span><i /></span><span className="brand-copy"><strong>FRAME<span>FLOW</span></strong><small>PRIVATE ADMIN WORKSPACE</small></span></a><span className="connection offline"><i /> ADMIN LOGIN REQUIRED</span></header>
+      <section className="panel" style={{ maxWidth: 480, margin: "8vh auto", padding: 28 }}>
+        <span className="section-kicker">PRIVATE ACCESS / OWNER ONLY</span>
+        <h1 style={{ margin: "12px 0", fontSize: 30 }}>Sign in to FrameFlow</h1>
+        <p style={{ color: "#a7a5bb", lineHeight: 1.7 }}>This video-processing workspace is restricted to the configured admin account. Public visitors cannot upload, process, or download videos.</p>
+        <form onSubmit={signInAdmin} style={{ display: "grid", gap: 14, marginTop: 22 }}>
+          <label style={{ display: "grid", gap: 7 }}>Admin email<input type="email" autoComplete="username" required value={loginEmail} onChange={e => setLoginEmail(e.target.value)} style={{ padding: 13, borderRadius: 8, background: "#101019", border: "1px solid #38324d", color: "#f6f4ff" }} /></label>
+          <label style={{ display: "grid", gap: 7 }}>Password<input type="password" autoComplete="current-password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} style={{ padding: 13, borderRadius: 8, background: "#101019", border: "1px solid #38324d", color: "#f6f4ff" }} /></label>
+          {authError && <div className="notice error-notice" role="alert"><span>!</span><p>{authError}</p></div>}
+          <button className="create-button" type="submit" disabled={authBusy} style={{ width: "100%" }}><span>{authBusy ? "VERIFYING ADMIN…" : "ADMIN SIGN IN"}</span><b>↗</b></button>
+        </form>
+        <p style={{ marginTop: 18, color: "#89869f", fontSize: 11 }}>No public sign-up is available. Create your single admin user in Supabase Authentication first.</p>
+      </section>
+      <footer className="footer"><span>PRIVATE WORKSPACE <i /> PCMDK369™ © 2026</span></footer>
+    </main>;
+  }
+
   return (
     <main className="app-shell">
       <div className="ambient ambient-one" />
@@ -180,6 +300,7 @@ export default function Home() {
           <span className="brand-copy"><strong>FRAME<span>FLOW</span></strong><small>DRAMA & ENTERTAINMENT</small></span>
         </a>
         <div className="topbar-right">
+          <button className="icon-button" onClick={() => void signOutAdmin()} title="Sign out admin" aria-label="Sign out admin" style={{ width: "auto", padding: "0 10px", fontSize: 10 }}>SIGN OUT</button>
           <span className={`connection ${apiState}`}><i />{apiState === "online" ? "PROCESSOR ONLINE" : apiState === "checking" ? "CHECKING SERVER" : "SERVER OFFLINE"}</span>
           <button className="icon-button" onClick={() => void checkBackend()} title="Check backend connection" aria-label="Refresh backend connection">↻</button>
         </div>
