@@ -15,6 +15,8 @@ services:
         value: sb_publishable_SXpcBN1pRvneUUFZQrz5vA_QlKwfWUH
       - key: ADMIN_EMAIL
         value: support.pcmdkai@gmail.com
+      - key: RECAPTCHA_SECRET_KEY
+        sync: false
       - key: WHISPER_MODEL
         value: base
       - key: WHISPER_DEVICE
