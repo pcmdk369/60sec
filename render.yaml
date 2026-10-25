@@ -8,7 +8,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: CORS_ORIGINS
-        value: https://60sec-pcmdk-369-s-projects.vercel.app,https://60sec-git-main-pcmdk-369-s-projects.vercel.app,https://60sec-3da9feztn-pcmdk-369-s-projects.vercel.app
+        value: https://60sec-mu.vercel.app,https://60sec-pcmdk-369-s-projects.vercel.app,https://60sec-git-main-pcmdk-369-s-projects.vercel.app,https://60sec-3da9feztn-pcmdk-369-s-projects.vercel.app,https://60sec-coklqa7su-pcmdk-369-s-projects.vercel.app
       - key: WHISPER_MODEL
         value: base
       - key: WHISPER_DEVICE
