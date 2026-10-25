@@ -28,6 +28,10 @@ export default function Home() {
   const [loginPassword, setLoginPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [recoveryMessage, setRecoveryMessage] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
   const adminEmail = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || "").trim().toLowerCase();
   const recaptchaSiteKey = (process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || "").trim();
   const [captionLanguage, setCaptionLanguage] = useState("original");
@@ -85,8 +89,12 @@ export default function Home() {
       setAuthError("Could not verify the saved session. Sign in again.");
       setAuthReady(true);
     });
-    const { data: { subscription } } = client.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: { subscription } } = client.auth.onAuthStateChange((event, nextSession) => {
       if (!mounted) return;
+      if (event === "PASSWORD_RECOVERY") {
+        setRecoveryMode(true);
+        setAuthError("");
+      }
       if (nextSession && adminEmail && (nextSession.user.email || "").toLowerCase() !== adminEmail) {
         setSession(null);
         setAuthError("Admin access only. Use the configured owner account.");
@@ -294,6 +302,75 @@ export default function Home() {
     }
   }
 
+  async function sendAdminPasswordReset() {
+    setAuthError("");
+    setRecoveryMessage("");
+    if (!supabase) {
+      setAuthError("Supabase is not configured on the Vercel frontend.");
+      return;
+    }
+    if (loginEmail.trim().toLowerCase() !== adminEmail) {
+      setAuthError("Enter the configured admin email before requesting a reset.");
+      return;
+    }
+    if (!captchaToken) {
+      setAuthError("Complete the robot verification checkbox before requesting a reset.");
+      return;
+    }
+    setResetBusy(true);
+    try {
+      const captchaResponse = await fetch(`${apiBase}/api/auth/verify-captcha`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: captchaToken }),
+        cache: "no-store",
+      });
+      if (!captchaResponse.ok) {
+        let detail = "Robot verification failed. Please try again.";
+        try { detail = (await captchaResponse.json()).detail || detail; } catch {}
+        throw new Error(detail);
+      }
+      const { error } = await supabase.auth.resetPasswordForEmail(loginEmail.trim(), {
+        redirectTo: window.location.origin,
+      });
+      if (error) throw error;
+      setRecoveryMessage("Password reset email sent. Open the link in your admin inbox to choose a new password.");
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Could not send the password reset email.");
+    } finally {
+      setResetBusy(false);
+      setCaptchaToken(null);
+      captchaRef.current?.reset();
+    }
+  }
+
+  async function updateAdminPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthError("");
+    if (!supabase) {
+      setAuthError("Supabase is not configured on the Vercel frontend.");
+      return;
+    }
+    if (newPassword.length < 12) {
+      setAuthError("Use a new password with at least 12 characters.");
+      return;
+    }
+    setResetBusy(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      await supabase.auth.signOut();
+      setSession(null);
+      setRecoveryMode(false);
+      setNewPassword("");
+      setRecoveryMessage("Admin password updated. Sign in with the new password.");
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Could not update the admin password.");
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
   async function signOutAdmin() {
     if (supabase) await supabase.auth.signOut();
     setSession(null);
@@ -310,6 +387,23 @@ export default function Home() {
 
   if (!supabase || !adminEmail) {
     return <main className="app-shell"><section className="panel" style={{ maxWidth: 560, margin: "12vh auto", padding: 28 }}><h1>Admin setup required</h1><p>Supabase is connected in the project code, but the frontend environment variables are not complete.</p><p>Set <code>NEXT_PUBLIC_SUPABASE_URL</code>, <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>, and <code>NEXT_PUBLIC_ADMIN_EMAIL</code> in Vercel, then redeploy.</p></section></main>;
+  }
+
+  if (recoveryMode && supabase) {
+    return (
+      <main className="app-shell">
+        <section className="panel" style={{ maxWidth: 520, margin: "12vh auto", padding: 28 }}>
+          <span className="section-kicker">PRIVATE ACCESS / PASSWORD RECOVERY</span>
+          <h1 style={{ margin: "12px 0", fontSize: 30 }}>Reset admin password</h1>
+          <p style={{ color: "#a7a5bb", lineHeight: 1.7 }}>Choose a new password for the configured admin account. Use at least 12 characters.</p>
+          <form onSubmit={updateAdminPassword} style={{ display: "grid", gap: 14, marginTop: 22 }}>
+            <label style={{ display: "grid", gap: 7 }}>New password<input type="password" autoComplete="new-password" minLength={12} required value={newPassword} onChange={e => setNewPassword(e.target.value)} style={{ padding: 13, borderRadius: 8, background: "#101019", border: "1px solid #38324d", color: "#f6f4ff" }} /></label>
+            {authError && <div className="notice error-notice" role="alert"><span>!</span><p>{authError}</p></div>}
+            <button className="create-button" type="submit" disabled={resetBusy} style={{ width: "100%" }}><span>{resetBusy ? "UPDATING PASSWORD…" : "UPDATE PASSWORD"}</span><b>↗</b></button>
+          </form>
+        </section>
+      </main>
+    );
   }
 
   if (!session || (session.user.email || "").toLowerCase() !== adminEmail) {
@@ -339,8 +433,10 @@ export default function Home() {
           )}
           {authError && <div className="notice error-notice" role="alert"><span>!</span><p>{authError}</p></div>}
           <button className="create-button" type="submit" disabled={authBusy || !recaptchaSiteKey || !captchaToken} style={{ width: "100%" }}><span>{authBusy ? "VERIFYING ADMIN…" : "ADMIN SIGN IN"}</span><b>↗</b></button>
+          <button type="button" onClick={() => void sendAdminPasswordReset()} disabled={resetBusy || !recaptchaSiteKey || !captchaToken} style={{ justifySelf: "center", background: "transparent", border: 0, color: "#c6b6ff", padding: "8px 12px", fontSize: 12, textDecoration: "underline" }}>{resetBusy ? "SENDING RESET EMAIL…" : "Forgot admin password?"}</button>
+          {recoveryMessage && <div className="notice success-notice" role="status"><span>✓</span><p>{recoveryMessage}</p></div>}
         </form>
-        <p style={{ marginTop: 18, color: "#89869f", fontSize: 11 }}>No public sign-up is available. Create your single admin user in Supabase Authentication first.</p>
+        <p style={{ marginTop: 18, color: "#89869f", fontSize: 11 }}>No public sign-up is available. Only the configured admin account can access the workspace.</p>
       </section>
       <footer className="footer"><span>PRIVATE WORKSPACE <i /> PCMDK369™ © 2026</span></footer>
     </main>;
