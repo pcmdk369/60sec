@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -76,6 +76,14 @@ def verify_captcha(payload: dict = Body(...)):
         raise HTTPException(502, "Could not verify the robot check. Please try again.")
     if not result.get("success"):
         raise HTTPException(400, "Robot verification expired or failed. Complete it again.")
+    allowed_hosts = {
+        (urlparse(origin.strip()).hostname or "").lower()
+        for origin in os.getenv("CORS_ORIGINS", "").split(",")
+        if origin.strip()
+    }
+    verified_host = str(result.get("hostname") or "").lower()
+    if allowed_hosts and verified_host not in allowed_hosts:
+        raise HTTPException(400, "Robot verification was issued for a different site.")
     return {"success": True}
 
 def emergency_translate(text: str, target: str) -> str:
