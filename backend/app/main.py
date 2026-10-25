@@ -1,40 +1,69 @@
-import os, shutil, subprocess, tempfile, zipfile, math, json, re, asyncio, threading, uuid
+import os, shutil, subprocess, tempfile, zipfile, math, json, re, asyncio, threading, uuid, base64, hashlib, hmac, time, secrets
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
-from urllib.parse import urlencode, urlparse
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 
+SESSION_TTL_SECONDS = 12 * 60 * 60
+LOGIN_ATTEMPTS = {}
+LOGIN_ATTEMPTS_LOCK = threading.Lock()
+
+def _password_matches(password: str, encoded: str) -> bool:
+    """Verify PBKDF2-SHA256 format: pbkdf2_sha256$iterations$salt_hex$digest_hex."""
+    try:
+        scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
+        if scheme != "pbkdf2_sha256":
+            return False
+        rounds = int(iterations)
+        if rounds < 200_000 or rounds > 2_000_000:
+            return False
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), rounds).hex()
+        return hmac.compare_digest(actual, expected_hex)
+    except (ValueError, TypeError):
+        return False
+
+def _session_secret() -> bytes:
+    secret = os.getenv("SESSION_SECRET", "").strip()
+    if len(secret) < 32:
+        raise HTTPException(503, "Admin authentication is not configured. Set a strong SESSION_SECRET on the backend.")
+    return secret.encode("utf-8")
+
+def _issue_token(username: str) -> str:
+    payload = {"sub": username, "exp": int(time.time()) + SESSION_TTL_SECONDS, "nonce": secrets.token_hex(8)}
+    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
+    signature = hmac.new(_session_secret(), body, hashlib.sha256).digest()
+    return body.decode() + "." + base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+
+def _verify_token(token: str) -> dict:
+    try:
+        body_text, signature_text = token.split(".", 1)
+        body = body_text.encode()
+        signature = base64.urlsafe_b64decode(signature_text + "=" * (-len(signature_text) % 4))
+        expected = hmac.new(_session_secret(), body, hashlib.sha256).digest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError("invalid signature")
+        payload = json.loads(base64.urlsafe_b64decode(body_text + "=" * (-len(body_text) % 4)))
+        if payload.get("sub") != os.getenv("ADMIN_USERNAME", "Admin").strip() or int(payload.get("exp", 0)) < int(time.time()):
+            raise ValueError("expired session")
+        return payload
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(401, "Your session is invalid or expired. Sign in again.")
+
 def require_admin(authorization: str | None = Header(default=None)):
-    """Validate a Supabase access token and allow only the configured admin email."""
-    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
-    publishable_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
-    admin_email = os.getenv("ADMIN_EMAIL", "").strip().lower()
-    if not (supabase_url and publishable_key and admin_email):
-        raise HTTPException(503, "Admin authentication is not configured on the backend.")
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Sign in with the admin account to continue.")
     token = authorization.split(" ", 1)[1].strip()
     if not token:
         raise HTTPException(401, "Missing access token.")
-    req = Request(
-        supabase_url + "/auth/v1/user",
-        headers={"apikey": publishable_key, "Authorization": "Bearer " + token},
-        method="GET",
-    )
-    try:
-        with urlopen(req, timeout=10) as response:
-            user = json.loads(response.read().decode("utf-8"))
-    except Exception:
-        raise HTTPException(401, "Your session is invalid or expired. Sign in again.")
-    if str(user.get("email") or "").strip().lower() != admin_email:
-        raise HTTPException(403, "Admin access only.")
-    return {"id": user.get("id"), "email": admin_email}
+    payload = _verify_token(token)
+    return {"username": payload["sub"]}
 
 app = FastAPI(title="Drama & Entertainment Shorts Cutter")
 app.add_middleware(
@@ -50,41 +79,40 @@ def health():
         "captions": "local-faster-whisper",
         "watermark": "Drama & Entertainment",
         "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID")),
-        "recaptcha_configured": bool(os.getenv("RECAPTCHA_SECRET_KEY", "").strip()),
+        "admin_auth_configured": bool(os.getenv("ADMIN_USERNAME") and os.getenv("ADMIN_PASSWORD_HASH") and len(os.getenv("SESSION_SECRET", "")) >= 32),
     }
 
+@app.post("/api/auth/login")
+def admin_login(request: FastAPIRequest, payload: dict = Body(...)):
+    username = str(payload.get("username") or "")
+    password = str(payload.get("password") or "")
+    configured_username = os.getenv("ADMIN_USERNAME", "Admin").strip()
+    password_hash = os.getenv("ADMIN_PASSWORD_HASH", "").strip()
+    if not password_hash or len(os.getenv("SESSION_SECRET", "").strip()) < 32:
+        raise HTTPException(503, "Admin authentication is not configured on the backend. Set ADMIN_PASSWORD_HASH and SESSION_SECRET.")
+    if not username or not password or len(password) > 1024:
+        raise HTTPException(400, "Enter the admin username and password.")
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    with LOGIN_ATTEMPTS_LOCK:
+        recent = [stamp for stamp in LOGIN_ATTEMPTS.get(client_ip, []) if now - stamp < 300]
+        if len(recent) >= 10:
+            LOGIN_ATTEMPTS[client_ip] = recent
+            raise HTTPException(429, "Too many login attempts. Wait five minutes and try again.")
+        recent.append(now)
+        LOGIN_ATTEMPTS[client_ip] = recent
+    username_ok = hmac.compare_digest(username.casefold(), configured_username.casefold())
+    password_ok = _password_matches(password, password_hash)
+    if not (username_ok and password_ok):
+        raise HTTPException(401, "Invalid username or password.")
+    with LOGIN_ATTEMPTS_LOCK:
+        LOGIN_ATTEMPTS.pop(client_ip, None)
+    return {"access_token": _issue_token(configured_username), "token_type": "bearer", "expires_in": SESSION_TTL_SECONDS, "username": configured_username}
 
-@app.post("/api/auth/verify-captcha")
-def verify_captcha(payload: dict = Body(...)):
-    """Verify Google reCAPTCHA on the server before allowing an admin sign-in attempt."""
-    secret = os.getenv("RECAPTCHA_SECRET_KEY", "").strip()
-    if not secret:
-        raise HTTPException(503, "Robot verification is not configured on the backend. Set RECAPTCHA_SECRET_KEY in Render.")
-    token = str(payload.get("token") or "").strip()
-    if not token:
-        raise HTTPException(400, "Complete the robot verification first.")
-    verify_request = Request(
-        "https://www.google.com/recaptcha/api/siteverify",
-        data=urlencode({"secret": secret, "response": token}).encode("utf-8"),
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-    try:
-        with urlopen(verify_request, timeout=8) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except Exception:
-        raise HTTPException(502, "Could not verify the robot check. Please try again.")
-    if not result.get("success"):
-        raise HTTPException(400, "Robot verification expired or failed. Complete it again.")
-    allowed_hosts = {
-        (urlparse(origin.strip()).hostname or "").lower()
-        for origin in os.getenv("CORS_ORIGINS", "").split(",")
-        if origin.strip()
-    }
-    verified_host = str(result.get("hostname") or "").lower()
-    if allowed_hosts and verified_host not in allowed_hosts:
-        raise HTTPException(400, "Robot verification was issued for a different site.")
-    return {"success": True}
+@app.get("/api/auth/session")
+def current_admin_session(admin: dict = Depends(require_admin)):
+    return {"authenticated": True, "username": admin["username"]}
+
 
 def emergency_translate(text: str, target: str) -> str:
     """One optional OpenAI-compatible LLM call, only as fallback for local translation failure."""
