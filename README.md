@@ -288,6 +288,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | Variable | Required | Description |
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | Yes for deployed frontend | Public base URL of the FastAPI service, without a trailing slash |
+| `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` | Yes for admin login | Public Google reCAPTCHA v2 checkbox site key; register the production Vercel domain |
 
 Example:
 
@@ -300,6 +301,10 @@ NEXT_PUBLIC_API_URL=https://your-backend.example.com
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `CORS_ORIGINS` | For deployment | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated allowed frontend origins |
+| `RECAPTCHA_SECRET_KEY` | Yes for admin login | Unset | Private Google reCAPTCHA secret; set only in Render, never in frontend or Git |
+| `SUPABASE_URL` | Yes for admin access | Unset | Supabase project URL used to validate admin sessions |
+| `SUPABASE_PUBLISHABLE_KEY` | Yes for admin access | Unset | Supabase publishable key used by backend auth validation |
+| `ADMIN_EMAIL` | Yes for admin access | Unset | The single allowed admin email address |
 | `VIDEO_WORKERS` | No | `1` | Maximum simultaneous background video jobs |
 | `JOB_STORAGE_DIR` | No | System temporary directory | Root directory for job files |
 | `WHISPER_MODEL` | No | `base` | faster-whisper model name |
@@ -318,6 +323,15 @@ NEXT_PUBLIC_API_URL=https://your-backend.example.com
 - **Frontend:** Vercel, with the project root set to `frontend`.
 - **Backend:** Render or another Python host that supports FFmpeg and background processing.
 - **Persistent queue/storage:** not included in the current single-instance version; see production-readiness notes below.
+
+#### Admin login and robot verification
+
+1. Register a Google reCAPTCHA v2 checkbox site in the Google reCAPTCHA admin console and include the production Vercel hostname plus any Vercel alias used for testing.
+2. Add `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` to the Vercel project environment.
+3. Add `RECAPTCHA_SECRET_KEY` as a private environment variable in Render (or sync the `render.yaml` Blueprint and enter it securely).
+4. Confirm `NEXT_PUBLIC_ADMIN_EMAIL` in Vercel and `ADMIN_EMAIL` in Render both equal `support.pcmdkai@gmail.com`.
+5. In Supabase Authentication, create or recover the admin user for that email using the password reset flow. Never commit or share the password.
+6. Redeploy both services after changing environment variables. The login form intentionally stays disabled until reCAPTCHA is configured and verified server-side.
 
 #### Frontend deployment
 
