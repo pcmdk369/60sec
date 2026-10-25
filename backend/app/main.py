@@ -149,10 +149,10 @@ async def _process_shorts(
             if captions_enabled and captions_warning:
                 status_file = work / "captions-status.txt"
                 status_file.write_text(
-                    "Video processing completed successfully, but automatic captions were skipped.\\n"
-                    f"Reason: {captions_warning}\\n"
+                    "Video processing completed successfully, but automatic captions were skipped.\n"
+                    f"Reason: {captions_warning}\n"
                     "The MP4 clips include the original audio and watermark. Try a video with clear speech, "
-                    "or disable captions for videos without dialogue.\\n",
+                    "or disable captions for videos without dialogue.\n",
                     encoding="utf-8",
                 )
                 z.write(status_file, status_file.name)
