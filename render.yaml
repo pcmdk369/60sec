@@ -8,7 +8,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: CORS_ORIGINS
-        value: https://60sec-mu.vercel.app,https://60sec-pcmdk-369-s-projects.vercel.app,https://60sec-git-main-pcmdk-369-s-projects.vercel.app,https://60sec-3da9feztn-pcmdk-369-s-projects.vercel.app,https://60sec-coklqa7su-pcmdk-369-s-projects.vercel.app
+        value: https://60sec.pcmdk369.com,https://60sec-mu.vercel.app,https://60sec-pcmdk-369-s-projects.vercel.app,https://60sec-git-main-pcmdk-369-s-projects.vercel.app,https://60sec-pmxau5av2-pcmdk-369-s-projects.vercel.app,https://60sec-3da9feztn-pcmdk-369-s-projects.vercel.app,https://60sec-coklqa7su-pcmdk-369-s-projects.vercel.app
       - key: SUPABASE_URL
         value: https://ppvreltuikaeydfcyupw.supabase.co
       - key: SUPABASE_PUBLISHABLE_KEY
