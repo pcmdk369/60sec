@@ -88,6 +88,8 @@ async def _process_shorts(
         if duration <= 0: raise HTTPException(422, "Invalid video duration.")
 
         segments = []
+        captions_available = False
+        captions_warning = None
         if captions_enabled:
             try:
                 from faster_whisper import WhisperModel
@@ -96,14 +98,18 @@ async def _process_shorts(
                 task = "translate" if caption_language == "english" else "transcribe"
                 recognized, info = model.transcribe(str(source), task=task, vad_filter=True, beam_size=3)
                 segments = [(float(s.start), float(s.end), s.text.strip()) for s in recognized if s.text.strip()]
-                if not segments: raise RuntimeError("No speech was detected. Try another video or turn captions off.")
+                if not segments:
+                    raise RuntimeError("No speech was detected in the source audio.")
                 if caption_language == "hindi" and (info.language or "").lower() not in {"hi", "ur"}:
                     translated = emergency_translate([s[2] for s in segments], "Hindi")
                     segments = [(s[0], s[1], translated[i]) for i, s in enumerate(segments)]
-            except HTTPException:
-                raise
+                captions_available = bool(segments)
             except Exception as exc:
-                raise HTTPException(422, "Automatic captions failed: " + str(exc)[:500] + ". Check backend dependencies/model download, or disable captions.") from exc
+                # Captions are optional: a speech/model/translation failure must not
+                # prevent the requested video cuts, watermark, and ZIP export.
+                captions_warning = str(exc)[:500]
+                segments = []
+                captions_available = False
 
         clips = work / "clips"; clips.mkdir()
         # Use a text file so punctuation such as '&' is passed literally to FFmpeg.
@@ -123,13 +129,14 @@ async def _process_shorts(
                 filters = [f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase", f"crop={target_width}:{target_height}", "setsar=1"]
             else:
                 filters = [f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease", f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black", "setsar=1"]
-            if captions_enabled:
+            if captions_enabled and captions_available:
                 local = [(max(0, a-start), min(length, b-start), t) for a,b,t in segments if b > start and a < start+length]
-                srt = work / f"captions_{i+1:03d}.srt"
-                make_srt(local, srt)
-                escaped = str(srt).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-                style = f"FontName=Arial,FontSize={size_px},PrimaryColour={color},OutlineColour=&H000000,BorderStyle=1,Outline={outline},Shadow=1,Alignment=2,MarginV=140"
-                filters.append(f"subtitles='{escaped}':force_style='{style}'")
+                if local:
+                    srt = work / f"captions_{i+1:03d}.srt"
+                    make_srt(local, srt)
+                    escaped = str(srt).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+                    style = f"FontName=Arial,FontSize={size_px},PrimaryColour={color},OutlineColour=&H000000,BorderStyle=1,Outline={outline},Shadow=1,Alignment=2,MarginV=140"
+                    filters.append(f"subtitles='{escaped}':force_style='{style}'")
             # Permanent, visible lower-right watermark on every exported clip.
             filters.append(f"drawtext=textfile='{watermark_path}':fontcolor=white:fontsize=42:box=1:boxcolor=black@0.60:boxborderw=14:x=w-tw-44:y=h-th-54")
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-i", str(source), "-t", str(length), "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters), "-c:v", "libx264", "-preset", encoder["preset"], "-crf", encoder["crf"], "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(output)]
@@ -137,7 +144,18 @@ async def _process_shorts(
             if result.returncode: raise HTTPException(422, "FFmpeg error: " + result.stderr[-1000:])
         archive = work / "drama-entertainment-shorts.zip"
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
-            for clip in sorted(clips.glob("*.mp4")): z.write(clip, clip.name)
+            for clip in sorted(clips.glob("*.mp4")):
+                z.write(clip, clip.name)
+            if captions_enabled and captions_warning:
+                status_file = work / "captions-status.txt"
+                status_file.write_text(
+                    "Video processing completed successfully, but automatic captions were skipped.\\n"
+                    f"Reason: {captions_warning}\\n"
+                    "The MP4 clips include the original audio and watermark. Try a video with clear speech, "
+                    "or disable captions for videos without dialogue.\\n",
+                    encoding="utf-8",
+                )
+                z.write(status_file, status_file.name)
         return FileResponse(str(archive), media_type="application/zip", filename=archive.name, background=BackgroundTask(shutil.rmtree, work, ignore_errors=True))
     except HTTPException:
         shutil.rmtree(work, ignore_errors=True)
