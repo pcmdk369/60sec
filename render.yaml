@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: 60sec-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: CORS_ORIGINS
+        value: https://60sec-pcmdk-369-s-projects.vercel.app,https://60sec-git-main-pcmdk-369-s-projects.vercel.app,https://60sec-3da9feztn-pcmdk-369-s-projects.vercel.app
+      - key: WHISPER_MODEL
+        value: base
+      - key: WHISPER_DEVICE
+        value: cpu
+      - key: WHISPER_COMPUTE_TYPE
+        value: int8
+      - key: VIDEO_WORKERS
+        value: "1"
