@@ -3,10 +3,37 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
+
+
+def require_admin(authorization: str | None = Header(default=None)):
+    """Validate a Supabase access token and allow only the configured admin email."""
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    publishable_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
+    admin_email = os.getenv("ADMIN_EMAIL", "").strip().lower()
+    if not (supabase_url and publishable_key and admin_email):
+        raise HTTPException(503, "Admin authentication is not configured on the backend.")
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Sign in with the admin account to continue.")
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(401, "Missing access token.")
+    req = Request(
+        supabase_url + "/auth/v1/user",
+        headers={"apikey": publishable_key, "Authorization": "Bearer " + token},
+        method="GET",
+    )
+    try:
+        with urlopen(req, timeout=10) as response:
+            user = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        raise HTTPException(401, "Your session is invalid or expired. Sign in again.")
+    if str(user.get("email") or "").strip().lower() != admin_email:
+        raise HTTPException(403, "Admin access only.")
+    return {"id": user.get("id"), "email": admin_email}
 
 app = FastAPI(title="Drama & Entertainment Shorts Cutter")
 app.add_middleware(
@@ -225,7 +252,8 @@ async def create_background_job(
     caption_size: str = Form("medium"),
     output_resolution: str = Form("1080p"),
     encoding_priority: str = Form("balanced"),
-    framing: str = Form("portrait")
+    framing: str = Form("portrait"),
+    _admin: dict = Depends(require_admin),
 ):
     ext = Path(file.filename or "").suffix.lower()
     if ext not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
@@ -276,7 +304,7 @@ async def create_background_job(
     return {"job_id": job_id, "status": "queued", "message": "Upload complete. Processing will continue in the background.", "status_url": f"/api/jobs/{job_id}"}
 
 @app.get("/api/jobs/{job_id}")
-def get_background_job(job_id: str):
+def get_background_job(job_id: str, _admin: dict = Depends(require_admin)):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if not job:
@@ -284,7 +312,7 @@ def get_background_job(job_id: str):
         return {"job_id": job_id, **job}
 
 @app.get("/api/jobs/{job_id}/download")
-def download_background_job(job_id: str):
+def download_background_job(job_id: str, _admin: dict = Depends(require_admin)):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if not job:
