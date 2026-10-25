@@ -3,7 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends
+from urllib.parse import urlencode
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
@@ -44,7 +45,38 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "captions": "local-faster-whisper", "watermark": "Drama & Entertainment", "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID"))}
+    return {
+        "status": "ok",
+        "captions": "local-faster-whisper",
+        "watermark": "Drama & Entertainment",
+        "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID")),
+        "recaptcha_configured": bool(os.getenv("RECAPTCHA_SECRET_KEY", "").strip()),
+    }
+
+
+@app.post("/api/auth/verify-captcha")
+def verify_captcha(payload: dict = Body(...)):
+    """Verify Google reCAPTCHA on the server before allowing an admin sign-in attempt."""
+    secret = os.getenv("RECAPTCHA_SECRET_KEY", "").strip()
+    if not secret:
+        raise HTTPException(503, "Robot verification is not configured on the backend. Set RECAPTCHA_SECRET_KEY in Render.")
+    token = str(payload.get("token") or "").strip()
+    if not token:
+        raise HTTPException(400, "Complete the robot verification first.")
+    verify_request = Request(
+        "https://www.google.com/recaptcha/api/siteverify",
+        data=urlencode({"secret": secret, "response": token}).encode("utf-8"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urlopen(verify_request, timeout=8) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        raise HTTPException(502, "Could not verify the robot check. Please try again.")
+    if not result.get("success"):
+        raise HTTPException(400, "Robot verification expired or failed. Complete it again.")
+    return {"success": True}
 
 def emergency_translate(text: str, target: str) -> str:
     """One optional OpenAI-compatible LLM call, only as fallback for local translation failure."""
