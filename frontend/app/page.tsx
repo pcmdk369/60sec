@@ -51,29 +51,30 @@ export default function Home() {
   useEffect(() => { void checkBackend(); }, []);
 
   useEffect(() => {
-    if (!supabase) {
+    const client = supabase;
+    if (!client) {
       setAuthReady(true);
       return;
     }
     let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
+    client.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       const current = data.session;
       if (current && adminEmail && (current.user.email || "").toLowerCase() !== adminEmail) {
         setAuthError("This account is not the configured admin account.");
         setSession(null);
-        void supabase.auth.signOut();
+        void client.auth.signOut();
       } else {
         setSession(current);
       }
       setAuthReady(true);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: { subscription } } = client.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return;
       if (nextSession && adminEmail && (nextSession.user.email || "").toLowerCase() !== adminEmail) {
         setSession(null);
         setAuthError("Admin access only. Use the configured owner account.");
-        void supabase.auth.signOut();
+        void client.auth.signOut();
       } else {
         setSession(nextSession);
       }
