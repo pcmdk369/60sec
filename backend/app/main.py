@@ -312,8 +312,34 @@ async def _process_shorts(
 # For multi-instance production deployments, replace this with Redis/Celery or a durable queue.
 JOB_ROOT = Path(os.getenv("JOB_STORAGE_DIR", tempfile.gettempdir())) / "drama-shorts-jobs"
 JOB_ROOT.mkdir(parents=True, exist_ok=True)
+JOB_STATE_FILE = JOB_ROOT / "jobs.json"
 JOBS = {}
 JOBS_LOCK = threading.Lock()
+
+def _persist_jobs_locked():
+    """Persist job metadata so ordinary process restarts do not erase status records."""
+    temp_path = JOB_STATE_FILE.with_suffix(".tmp")
+    try:
+        temp_path.write_text(json.dumps(JOBS, ensure_ascii=False), encoding="utf-8")
+        temp_path.replace(JOB_STATE_FILE)
+    except OSError:
+        # Do not crash video processing if the ephemeral filesystem is temporarily unavailable.
+        pass
+
+try:
+    if JOB_STATE_FILE.is_file():
+        stored_jobs = json.loads(JOB_STATE_FILE.read_text(encoding="utf-8"))
+        if isinstance(stored_jobs, dict):
+            JOBS.update(stored_jobs)
+            for _job_id, _job in JOBS.items():
+                if _job.get("status") in {"queued", "processing"}:
+                    _job["status"] = "failed"
+                    _job["message"] = "Backend restarted while this job was running. Please submit the video again."
+            with JOBS_LOCK:
+                _persist_jobs_locked()
+except (OSError, ValueError, TypeError):
+    JOBS = {}
+
 WORKERS = ThreadPoolExecutor(max_workers=max(1, int(os.getenv("VIDEO_WORKERS", "1"))))
 
 def _run_job(job_id: str, source_path: Path, options: dict):
@@ -321,6 +347,7 @@ def _run_job(job_id: str, source_path: Path, options: dict):
     with JOBS_LOCK:
         JOBS[job_id]["status"] = "processing"
         JOBS[job_id]["message"] = "Video is processing in the background."
+        _persist_jobs_locked()
     try:
         with source_path.open("rb") as handle:
             upload = UploadFile(filename=source_path.name, file=handle)
@@ -347,12 +374,14 @@ def _run_job(job_id: str, source_path: Path, options: dict):
             JOBS[job_id]["status"] = "completed"
             JOBS[job_id]["message"] = "Your ZIP is ready to download."
             JOBS[job_id]["download_url"] = f"/api/jobs/{job_id}/download"
+            _persist_jobs_locked()
     except Exception as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
         with JOBS_LOCK:
             if job_id in JOBS:
                 JOBS[job_id]["status"] = "failed"
                 JOBS[job_id]["message"] = str(exc)[:700]
+                _persist_jobs_locked()
     finally:
         source_path.unlink(missing_ok=True)
 
@@ -414,6 +443,7 @@ async def create_background_job(
     }
     with JOBS_LOCK:
         JOBS[job_id] = {"status": "queued", "message": "Upload received. Waiting for a processing worker.", "download_url": None}
+        _persist_jobs_locked()
     WORKERS.submit(_run_job, job_id, source_path, options)
     return {"job_id": job_id, "status": "queued", "message": "Upload complete. Processing will continue in the background.", "status_url": f"/api/jobs/{job_id}"}
 
@@ -422,7 +452,7 @@ def get_background_job(job_id: str, _admin: dict = Depends(require_admin)):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if not job:
-            raise HTTPException(404, "Job not found. Jobs are stored in memory and may be lost if the backend restarts.")
+            raise HTTPException(404, "Job not found. This job record is not available on the current backend instance.")
         return {"job_id": job_id, **job}
 
 @app.get("/api/jobs/{job_id}/download")
@@ -430,7 +460,7 @@ def download_background_job(job_id: str, _admin: dict = Depends(require_admin)):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if not job:
-            raise HTTPException(404, "Job not found. The backend may have restarted.")
+            raise HTTPException(404, "Job not found. This job record is not available on the current backend instance.")
         if job["status"] != "completed":
             raise HTTPException(409, "The ZIP is not ready yet.")
     zip_path = JOB_ROOT / job_id / "drama-entertainment-shorts.zip"
