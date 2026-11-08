@@ -558,3 +558,38 @@ This repository and its branding are maintained under PCMDK369™. No open-sourc
   <em>Built for creators. Designed for focused video workflows.</em><br />
   <a href="mailto:support.pcmdkai@gmail.com">Contact the team</a>
 </p>
+
+## Windows 11 — Local installation (recommended)
+
+FRAMEFLOW can run on a Windows 11 computer without Render, Vercel, Supabase, or a remote video-processing server. FFmpeg encoding and the optional faster-whisper speech model run on the local machine. Keep this computer powered on while a job is processing.
+
+### Requirements
+
+- Windows 11 x64
+- Python 3.11 or 3.12
+- Node.js 20 LTS or newer (npm included)
+- FFmpeg and FFprobe available on PATH
+- Internet access for the initial dependency/model downloads
+- Disk space for source videos, generated clips, and temporary processing files
+
+### First-time setup
+
+1. Install Python and Node.js if they are not already installed.
+2. Clone this repository and open PowerShell in the repository folder.
+3. If Windows blocks local scripts, run `Set-ExecutionPolicy -Scope Process Bypass`.
+4. Run `./setup.ps1`. The script creates the Python virtual environment, installs backend/frontend dependencies, checks FFmpeg, and creates a private local admin configuration. It asks you to choose an admin username and password.
+5. If the script installs FFmpeg through Windows Package Manager, close and reopen PowerShell, then run `./setup.ps1` again.
+6. Run `./start.ps1`. The launcher builds the frontend and starts Next.js in production mode alongside the single-worker local FastAPI service.
+7. Open [http://127.0.0.1:3000](http://127.0.0.1:3000). The backend health endpoint is [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health).
+
+### Local configuration and privacy
+
+- Admin credentials and the session secret are generated locally in `backend/.env`; this file is ignored by Git.
+- The frontend API address is stored in `frontend/.env.local`; it is also ignored by Git.
+- Optional LLM translation settings are blank by default. Core video splitting and encoding do not require an AI API key.
+- The backend binds to `127.0.0.1`, so it is intended for use on this computer and is not exposed to your local network by default.
+- Do not expose the local server to the public internet without adding HTTPS, hardened session handling, persistent job storage, upload quotas, and a production deployment review.
+
+### Current local-mode scope
+
+The Windows scripts provide a local developer launch path for the existing application. The current backend still uses an in-process job queue. Local job files and completed ZIP archives are stored under `data/drama-shorts-jobs` by default; queued/processing jobs are marked failed after a backend restart and must be resubmitted. This is restart-visible local storage, not a durable retrying queue. Do not treat this first local setup milestone as a completed multi-user production deployment. Durable SQLite job recovery, managed storage/retention, and end-to-end Windows video tests remain required before calling the software production-ready.

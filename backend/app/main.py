@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body, Request as FastAPIRequest, Request as FastAPIRequest
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
@@ -15,52 +15,6 @@ LOGIN_ATTEMPTS_LOCK = threading.Lock()
 
 def _password_matches(password: str, encoded: str) -> bool:
     """Verify PBKDF2-SHA256 format: pbkdf2_sha256$iterations$salt_hex$digest_hex."""
-    try:
-        scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
-        if scheme != "pbkdf2_sha256":
-            return False
-        rounds = int(iterations)
-        if rounds < 200_000 or rounds > 2_000_000:
-            return False
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), rounds).hex()
-        return hmac.compare_digest(actual, expected_hex)
-    except (ValueError, TypeError):
-        return False
-
-def _session_secret() -> bytes:
-    secret = os.getenv("SESSION_SECRET", "").strip()
-    if len(secret) < 32:
-        raise HTTPException(503, "Admin authentication is not configured. Set a strong SESSION_SECRET on the backend.")
-    return secret.encode("utf-8")
-
-def _issue_token(username: str) -> str:
-    payload = {"sub": username, "exp": int(time.time()) + SESSION_TTL_SECONDS, "nonce": secrets.token_hex(8)}
-    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
-    signature = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-    return body.decode() + "." + base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
-
-def _verify_token(token: str) -> dict:
-    try:
-        body_text, signature_text = token.split(".", 1)
-        body = body_text.encode()
-        signature = base64.urlsafe_b64decode(signature_text + "=" * (-len(signature_text) % 4))
-        expected = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError("invalid signature")
-        payload = json.loads(base64.urlsafe_b64decode(body_text + "=" * (-len(body_text) % 4)))
-        if payload.get("sub") != os.getenv("ADMIN_USERNAME", "Admin").strip() or int(payload.get("exp", 0)) < int(time.time()):
-            raise ValueError("expired session")
-        return payload
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(401, "Your session is invalid or expired. Sign in again.")
-
-SESSION_TTL_SECONDS = 12 * 60 * 60
-LOGIN_ATTEMPTS = {}
-LOGIN_ATTEMPTS_LOCK = threading.Lock()
-
-def _password_matches(password: str, encoded: str) -> bool:
     try:
         scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
         if scheme != "pbkdf2_sha256":
@@ -123,7 +77,7 @@ def health():
     return {
         "status": "ok",
         "captions": "local-faster-whisper",
-        "watermark": "Drama & Entertainment",
+        "watermark": "Drama Clip AI",
         "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID")),
         "admin_auth_configured": bool(os.getenv("ADMIN_USERNAME") and os.getenv("ADMIN_PASSWORD_HASH") and len(os.getenv("SESSION_SECRET", "")) >= 32),
     }
@@ -255,7 +209,7 @@ async def _process_shorts(
         clips = work / "clips"; clips.mkdir()
         # Use a text file so punctuation such as '&' is passed literally to FFmpeg.
         watermark_file = work / "watermark.txt"
-        watermark_file.write_text("Drama & Entertainment", encoding="utf-8")
+        watermark_file.write_text("Drama Clip AI", encoding="utf-8")
         watermark_path = str(watermark_file).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
         count = max(1, math.ceil(duration / 60))
         color = {"white": "&H00FFFFFF", "yellow": "&H0000FFFF", "cyan": "&H00FFFF00", "pink": "&H00C0A0FF"}[caption_color]
@@ -283,7 +237,7 @@ async def _process_shorts(
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-i", str(source), "-t", str(length), "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters), "-c:v", "libx264", "-preset", encoder["preset"], "-crf", encoder["crf"], "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(output)]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode: raise HTTPException(422, "FFmpeg error: " + result.stderr[-1000:])
-        archive = work / "drama-entertainment-shorts.zip"
+        archive = work / "drama-clip-ai-shorts.zip"
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
             for clip in sorted(clips.glob("*.mp4")):
                 z.write(clip, clip.name)
@@ -310,7 +264,7 @@ async def _process_shorts(
 
 # Lightweight in-process background job queue. Jobs continue after the browser request returns.
 # For multi-instance production deployments, replace this with Redis/Celery or a durable queue.
-JOB_ROOT = Path(os.getenv("JOB_STORAGE_DIR", tempfile.gettempdir())) / "drama-shorts-jobs"
+JOB_ROOT = Path(os.getenv("JOB_STORAGE_DIR", str(Path(__file__).resolve().parents[2] / "data"))) / "drama-shorts-jobs"
 JOB_ROOT.mkdir(parents=True, exist_ok=True)
 JOB_STATE_FILE = JOB_ROOT / "jobs.json"
 JOBS = {}
@@ -364,7 +318,7 @@ def _run_job(job_id: str, source_path: Path, options: dict):
             ))
             if not isinstance(response, FileResponse):
                 raise RuntimeError("Video processor did not return a ZIP file.")
-            zip_path = job_dir / "drama-entertainment-shorts.zip"
+            zip_path = job_dir / "drama-clip-ai-shorts.zip"
             shutil.copyfile(response.path, zip_path)
             if response.background:
                 task = response.background()
@@ -463,7 +417,7 @@ def download_background_job(job_id: str, _admin: dict = Depends(require_admin)):
             raise HTTPException(404, "Job not found. This job record is not available on the current backend instance.")
         if job["status"] != "completed":
             raise HTTPException(409, "The ZIP is not ready yet.")
-    zip_path = JOB_ROOT / job_id / "drama-entertainment-shorts.zip"
+    zip_path = JOB_ROOT / job_id / "drama-clip-ai-shorts.zip"
     if not zip_path.is_file():
         raise HTTPException(404, "Generated ZIP is no longer available.")
-    return FileResponse(str(zip_path), media_type="application/zip", filename="drama-entertainment-shorts.zip")
+    return FileResponse(str(zip_path), media_type="application/zip", filename="drama-clip-ai-shorts.zip")
