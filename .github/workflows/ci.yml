@@ -32,7 +32,22 @@ jobs:
       - name: Smoke-test FastAPI app import and routes
         env:
           PYTHONPATH: backend
-        run: python -c "from app.main import app; paths = {route.path for route in app.routes}; expected = {'/health', '/api/auth/login', '/api/auth/session', '/api/jobs', '/api/jobs/{job_id}', '/api/jobs/{job_id}/download'}; assert expected.issubset(paths), {'missing': sorted(expected - paths), 'actual': sorted(paths)}; print('FastAPI import, admin login/session, and background job routes OK')"
+        run: |
+          python - <<'PY'
+          from app.main import app
+          paths = {route.path for route in app.routes}
+          expected = {
+              "/health",
+              "/api/auth/login",
+              "/api/auth/session",
+              "/api/jobs",
+              "/api/jobs/{job_id}",
+              "/api/jobs/{job_id}/download",
+          }
+          missing = expected - paths
+          assert not missing, f"Missing routes: {sorted(missing)}"
+          print("FastAPI routes OK")
+          PY
       - name: Run backend unit tests
         env:
           PYTHONPATH: backend
