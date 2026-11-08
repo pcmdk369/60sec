@@ -36,7 +36,7 @@ if (-not (Test-Path $BackendEnv)) {
     $HashOutput = & $VenvPython (Join-Path $Root "backend\scripts\generate_admin_password_hash.py")
     if ($LASTEXITCODE -ne 0 -or -not $HashOutput) { throw "Could not create admin password hash." }
     $Secret = (& $VenvPython -c "import secrets; print(secrets.token_urlsafe(48))").Trim()
-    @("ADMIN_USERNAME=$AdminUser", $HashOutput.Trim(), "SESSION_SECRET=$Secret", "CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000", "LLM_API_KEY=", "LLM_API_URL=", "LLM_MODEL_ID=") | Set-Content -Path $BackendEnv -Encoding utf8
+    @("ADMIN_USERNAME=$AdminUser", $HashOutput.Trim(), "SESSION_SECRET=$Secret", "CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000", "LLM_API_KEY=", "LLM_API_URL=", "LLM_MODEL_ID=") | Set-Content -Path $BackendEnv -Encoding ascii
     Write-Host "Created private backend/.env." -ForegroundColor Green
 }
 $FrontendEnv = Join-Path $Root "frontend\.env.local"
