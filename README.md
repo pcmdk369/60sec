@@ -579,7 +579,7 @@ FRAMEFLOW can run on a Windows 11 computer without Render, Vercel, Supabase, or 
 3. If Windows blocks local scripts, run `Set-ExecutionPolicy -Scope Process Bypass`.
 4. Run `./setup.ps1`. The script creates the Python virtual environment, installs backend/frontend dependencies, checks FFmpeg, and creates a private local admin configuration. It asks you to choose an admin username and password.
 5. If the script installs FFmpeg through Windows Package Manager, close and reopen PowerShell, then run `./setup.ps1` again.
-6. Run `./start.ps1`.
+6. Run `./start.ps1`. The launcher builds the frontend and starts Next.js in production mode alongside the single-worker local FastAPI service.
 7. Open [http://127.0.0.1:3000](http://127.0.0.1:3000). The backend health endpoint is [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health).
 
 ### Local configuration and privacy
