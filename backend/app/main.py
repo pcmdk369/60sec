@@ -123,7 +123,7 @@ def health():
     return {
         "status": "ok",
         "captions": "local-faster-whisper",
-        "watermark": "Drama & Entertainment",
+        "watermark": "Drama Clip AI",
         "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID")),
         "admin_auth_configured": bool(os.getenv("ADMIN_USERNAME") and os.getenv("ADMIN_PASSWORD_HASH") and len(os.getenv("SESSION_SECRET", "")) >= 32),
     }
@@ -255,7 +255,7 @@ async def _process_shorts(
         clips = work / "clips"; clips.mkdir()
         # Use a text file so punctuation such as '&' is passed literally to FFmpeg.
         watermark_file = work / "watermark.txt"
-        watermark_file.write_text("Drama & Entertainment", encoding="utf-8")
+        watermark_file.write_text("Drama Clip AI", encoding="utf-8")
         watermark_path = str(watermark_file).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
         count = max(1, math.ceil(duration / 60))
         color = {"white": "&H00FFFFFF", "yellow": "&H0000FFFF", "cyan": "&H00FFFF00", "pink": "&H00C0A0FF"}[caption_color]
@@ -283,7 +283,7 @@ async def _process_shorts(
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start), "-i", str(source), "-t", str(length), "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters), "-c:v", "libx264", "-preset", encoder["preset"], "-crf", encoder["crf"], "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(output)]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode: raise HTTPException(422, "FFmpeg error: " + result.stderr[-1000:])
-        archive = work / "drama-entertainment-shorts.zip"
+        archive = work / "drama-clip-ai-shorts.zip"
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
             for clip in sorted(clips.glob("*.mp4")):
                 z.write(clip, clip.name)
@@ -310,7 +310,7 @@ async def _process_shorts(
 
 # Lightweight in-process background job queue. Jobs continue after the browser request returns.
 # For multi-instance production deployments, replace this with Redis/Celery or a durable queue.
-JOB_ROOT = Path(os.getenv("JOB_STORAGE_DIR", tempfile.gettempdir())) / "drama-shorts-jobs"
+JOB_ROOT = Path(os.getenv("JOB_STORAGE_DIR", str(Path(__file__).resolve().parents[2] / "data"))) / "drama-shorts-jobs"
 JOB_ROOT.mkdir(parents=True, exist_ok=True)
 JOB_STATE_FILE = JOB_ROOT / "jobs.json"
 JOBS = {}
