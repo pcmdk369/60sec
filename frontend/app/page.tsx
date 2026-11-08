@@ -91,7 +91,7 @@ export default function Home() {
           const blobUrl = URL.createObjectURL(await downloadResponse.blob());
           const a = document.createElement("a");
           a.href = blobUrl;
-          a.download = "drama-entertainment-shorts.zip";
+          a.download = "drama-clip-ai-shorts.zip";
           document.body.appendChild(a);
           a.click();
           a.remove();
