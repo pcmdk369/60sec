@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body, Request as FastAPIRequest, Request as FastAPIRequest
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
@@ -15,52 +15,6 @@ LOGIN_ATTEMPTS_LOCK = threading.Lock()
 
 def _password_matches(password: str, encoded: str) -> bool:
     """Verify PBKDF2-SHA256 format: pbkdf2_sha256$iterations$salt_hex$digest_hex."""
-    try:
-        scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
-        if scheme != "pbkdf2_sha256":
-            return False
-        rounds = int(iterations)
-        if rounds < 200_000 or rounds > 2_000_000:
-            return False
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), rounds).hex()
-        return hmac.compare_digest(actual, expected_hex)
-    except (ValueError, TypeError):
-        return False
-
-def _session_secret() -> bytes:
-    secret = os.getenv("SESSION_SECRET", "").strip()
-    if len(secret) < 32:
-        raise HTTPException(503, "Admin authentication is not configured. Set a strong SESSION_SECRET on the backend.")
-    return secret.encode("utf-8")
-
-def _issue_token(username: str) -> str:
-    payload = {"sub": username, "exp": int(time.time()) + SESSION_TTL_SECONDS, "nonce": secrets.token_hex(8)}
-    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
-    signature = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-    return body.decode() + "." + base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
-
-def _verify_token(token: str) -> dict:
-    try:
-        body_text, signature_text = token.split(".", 1)
-        body = body_text.encode()
-        signature = base64.urlsafe_b64decode(signature_text + "=" * (-len(signature_text) % 4))
-        expected = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError("invalid signature")
-        payload = json.loads(base64.urlsafe_b64decode(body_text + "=" * (-len(body_text) % 4)))
-        if payload.get("sub") != os.getenv("ADMIN_USERNAME", "Admin").strip() or int(payload.get("exp", 0)) < int(time.time()):
-            raise ValueError("expired session")
-        return payload
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(401, "Your session is invalid or expired. Sign in again.")
-
-SESSION_TTL_SECONDS = 12 * 60 * 60
-LOGIN_ATTEMPTS = {}
-LOGIN_ATTEMPTS_LOCK = threading.Lock()
-
-def _password_matches(password: str, encoded: str) -> bool:
     try:
         scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
         if scheme != "pbkdf2_sha256":
@@ -364,7 +318,7 @@ def _run_job(job_id: str, source_path: Path, options: dict):
             ))
             if not isinstance(response, FileResponse):
                 raise RuntimeError("Video processor did not return a ZIP file.")
-            zip_path = job_dir / "drama-entertainment-shorts.zip"
+            zip_path = job_dir / "drama-clip-ai-shorts.zip"
             shutil.copyfile(response.path, zip_path)
             if response.background:
                 task = response.background()
@@ -463,7 +417,7 @@ def download_background_job(job_id: str, _admin: dict = Depends(require_admin)):
             raise HTTPException(404, "Job not found. This job record is not available on the current backend instance.")
         if job["status"] != "completed":
             raise HTTPException(409, "The ZIP is not ready yet.")
-    zip_path = JOB_ROOT / job_id / "drama-entertainment-shorts.zip"
+    zip_path = JOB_ROOT / job_id / "drama-clip-ai-shorts.zip"
     if not zip_path.is_file():
         raise HTTPException(404, "Generated ZIP is no longer available.")
-    return FileResponse(str(zip_path), media_type="application/zip", filename="drama-entertainment-shorts.zip")
+    return FileResponse(str(zip_path), media_type="application/zip", filename="drama-clip-ai-shorts.zip")
