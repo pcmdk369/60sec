@@ -56,52 +56,6 @@ def _verify_token(token: str) -> dict:
     except Exception:
         raise HTTPException(401, "Your session is invalid or expired. Sign in again.")
 
-SESSION_TTL_SECONDS = 12 * 60 * 60
-LOGIN_ATTEMPTS = {}
-LOGIN_ATTEMPTS_LOCK = threading.Lock()
-
-def _password_matches(password: str, encoded: str) -> bool:
-    try:
-        scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
-        if scheme != "pbkdf2_sha256":
-            return False
-        rounds = int(iterations)
-        if rounds < 200_000 or rounds > 2_000_000:
-            return False
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), rounds).hex()
-        return hmac.compare_digest(actual, expected_hex)
-    except (ValueError, TypeError):
-        return False
-
-def _session_secret() -> bytes:
-    secret = os.getenv("SESSION_SECRET", "").strip()
-    if len(secret) < 32:
-        raise HTTPException(503, "Admin authentication is not configured. Set a strong SESSION_SECRET on the backend.")
-    return secret.encode("utf-8")
-
-def _issue_token(username: str) -> str:
-    payload = {"sub": username, "exp": int(time.time()) + SESSION_TTL_SECONDS, "nonce": secrets.token_hex(8)}
-    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
-    signature = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-    return body.decode() + "." + base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
-
-def _verify_token(token: str) -> dict:
-    try:
-        body_text, signature_text = token.split(".", 1)
-        body = body_text.encode()
-        signature = base64.urlsafe_b64decode(signature_text + "=" * (-len(signature_text) % 4))
-        expected = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError("invalid signature")
-        payload = json.loads(base64.urlsafe_b64decode(body_text + "=" * (-len(body_text) % 4)))
-        if payload.get("sub") != os.getenv("ADMIN_USERNAME", "Admin").strip() or int(payload.get("exp", 0)) < int(time.time()):
-            raise ValueError("expired session")
-        return payload
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(401, "Your session is invalid or expired. Sign in again.")
-
 def require_admin(authorization: str | None = Header(default=None)):
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Sign in with the admin account to continue.")
