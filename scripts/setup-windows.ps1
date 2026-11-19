@@ -71,11 +71,11 @@ WHISPER_COMPUTE_TYPE=int8
 LLMS_ENGINE_API_KEY=
 LLMS_ENGINE_API_URL=
 LLMS_ENGINE_MODEL=
-"@ | Set-Content -Path $envFile -Encoding UTF8
+"@ | Set-Content -Path $envFile -Encoding ASCII
 } else {
   Write-Host "Existing backend .env found; keeping existing settings and credentials." -ForegroundColor Yellow
 }
-"NEXT_PUBLIC_API_URL=http://127.0.0.1:8000" | Set-Content -Path (Join-Path $frontend ".env.local") -Encoding UTF8
+"NEXT_PUBLIC_API_URL=http://127.0.0.1:8000" | Set-Content -Path (Join-Path $frontend ".env.local") -Encoding ASCII
 
 Write-Host "Installing Python backend packages..." -ForegroundColor Cyan
 if (-not (Test-Path (Join-Path $backend ".venv\Scripts\python.exe"))) {
