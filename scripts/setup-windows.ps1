@@ -18,7 +18,7 @@ $packages = @(
   @{ Id = "Gyan.FFmpeg.Shared"; Name = "FFmpeg" }
 )
 foreach ($pkg in $packages) {
-  if ($pkg.Name -eq "Python" -and (Get-Command py -ErrorAction SilentlyContinue)) { continue }
+  if ($pkg.Name -eq "Python" -and (Get-Command py -ErrorAction SilentlyContinue)) { & py -3.12 --version 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { continue } }
   if ($pkg.Name -eq "Node" -and (Get-Command node -ErrorAction SilentlyContinue)) { continue }
   if ($pkg.Name -eq "FFmpeg" -and (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { continue }
   winget install --id $pkg.Id -e --silent --accept-package-agreements --accept-source-agreements
