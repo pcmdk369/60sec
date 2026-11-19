@@ -7,6 +7,9 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depe
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 SESSION_TTL_SECONDS = 12 * 60 * 60
