@@ -114,7 +114,7 @@ def current_admin_session(admin: dict = Depends(require_admin)):
     return {"authenticated": True, "username": admin["username"]}
 
 
-def emergency_translate(text: str, target: str) -> str:
+def emergency_translate(text: list[str], target: str) -> list[str]:
     """One optional OpenAI-compatible LLM call, only as fallback for local translation failure."""
     key, url, model = (os.getenv(k, "").strip() for k in ("LLM_API_KEY", "LLM_API_URL", "LLM_MODEL_ID"))
     if not (key and url and model):
@@ -179,8 +179,12 @@ async def _process_shorts(
         if not size: raise HTTPException(400, "Empty video.")
         probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(source)], capture_output=True, text=True)
         if probe.returncode: raise HTTPException(422, "Unable to read video. Check FFmpeg installation.")
-        duration = float(probe.stdout.strip())
-        if duration <= 0: raise HTTPException(422, "Invalid video duration.")
+        try:
+            duration = float(probe.stdout.strip())
+        except (TypeError, ValueError):
+            raise HTTPException(422, "Unable to determine video duration.")
+        if not math.isfinite(duration) or duration <= 0:
+            raise HTTPException(422, "Invalid video duration.")
 
         segments = []
         captions_available = False
@@ -398,7 +402,14 @@ async def create_background_job(
     with JOBS_LOCK:
         JOBS[job_id] = {"status": "queued", "message": "Upload received. Waiting for a processing worker.", "download_url": None}
         _persist_jobs_locked()
-    WORKERS.submit(_run_job, job_id, source_path, options)
+    try:
+        WORKERS.submit(_run_job, job_id, source_path, options)
+    except RuntimeError as exc:
+        with JOBS_LOCK:
+            JOBS.pop(job_id, None)
+            _persist_jobs_locked()
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(503, "The video processor is temporarily unavailable. Please retry shortly.") from exc
     return {"job_id": job_id, "status": "queued", "message": "Upload complete. Processing will continue in the background.", "status_url": f"/api/jobs/{job_id}"}
 
 @app.get("/api/jobs/{job_id}")
