@@ -71,6 +71,7 @@ export default function Home() {
   useEffect(() => {
     if (!activeJob) return;
     let stopped = false;
+    let completionStarted = false;
     let timer: ReturnType<typeof setInterval> | undefined;
     const poll = async () => {
       try {
@@ -80,25 +81,38 @@ export default function Home() {
         if (stopped) return;
         setJobStatus(job.status || "processing");
         setJobMessage(job.message || "Processing in the background…");
-        if (job.status === "completed") {
-          stopped = true;
+        if (job.status === "completed" && !completionStarted) {
+          completionStarted = true;
           if (timer) clearInterval(timer);
-          const downloadResponse = await fetch(`${apiBase}/api/jobs/${activeJob}/download`, {
-            headers: { Authorization: `Bearer ${session?.access_token || ""}` },
-            cache: "no-store",
-          });
-          if (!downloadResponse.ok) throw new Error("Could not download the ZIP. Please sign in again and retry.");
-          const blobUrl = URL.createObjectURL(await downloadResponse.blob());
-          const a = document.createElement("a");
-          a.href = blobUrl;
-          a.download = "drama-entertainment-shorts.zip";
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(blobUrl);
-          setMessage("Processing completed in the background. Your ZIP download has started.");
-          setActiveJob(null);
-          setBusy(false);
+          try {
+            const downloadResponse = await fetch(`${apiBase}/api/jobs/${activeJob}/download`, {
+              headers: { Authorization: `Bearer ${session?.access_token || ""}` },
+              cache: "no-store",
+            });
+            if (!downloadResponse.ok) {
+              let detail = "Could not download the completed ZIP.";
+              try { detail = (await downloadResponse.json()).detail || detail; } catch {}
+              throw new Error(detail);
+            }
+            const blobUrl = URL.createObjectURL(await downloadResponse.blob());
+            const a = document.createElement("a");
+            a.href = blobUrl;
+            a.download = "drama-entertainment-shorts.zip";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+            stopped = true;
+            setMessage("Processing completed in the background. Your ZIP download has started.");
+            setActiveJob(null);
+            setBusy(false);
+          } catch (downloadError) {
+            stopped = true;
+            setError(downloadError instanceof Error ? downloadError.message : "The ZIP is ready, but the download failed. Please submit the video again.");
+            setJobMessage("");
+            setActiveJob(null);
+            setBusy(false);
+          }
         } else if (job.status === "failed") {
           stopped = true;
           if (timer) clearInterval(timer);

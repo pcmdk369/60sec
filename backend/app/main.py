@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body, Request as FastAPIRequest, Request as FastAPIRequest
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
@@ -15,52 +15,6 @@ LOGIN_ATTEMPTS_LOCK = threading.Lock()
 
 def _password_matches(password: str, encoded: str) -> bool:
     """Verify PBKDF2-SHA256 format: pbkdf2_sha256$iterations$salt_hex$digest_hex."""
-    try:
-        scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
-        if scheme != "pbkdf2_sha256":
-            return False
-        rounds = int(iterations)
-        if rounds < 200_000 or rounds > 2_000_000:
-            return False
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), rounds).hex()
-        return hmac.compare_digest(actual, expected_hex)
-    except (ValueError, TypeError):
-        return False
-
-def _session_secret() -> bytes:
-    secret = os.getenv("SESSION_SECRET", "").strip()
-    if len(secret) < 32:
-        raise HTTPException(503, "Admin authentication is not configured. Set a strong SESSION_SECRET on the backend.")
-    return secret.encode("utf-8")
-
-def _issue_token(username: str) -> str:
-    payload = {"sub": username, "exp": int(time.time()) + SESSION_TTL_SECONDS, "nonce": secrets.token_hex(8)}
-    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
-    signature = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-    return body.decode() + "." + base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
-
-def _verify_token(token: str) -> dict:
-    try:
-        body_text, signature_text = token.split(".", 1)
-        body = body_text.encode()
-        signature = base64.urlsafe_b64decode(signature_text + "=" * (-len(signature_text) % 4))
-        expected = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError("invalid signature")
-        payload = json.loads(base64.urlsafe_b64decode(body_text + "=" * (-len(body_text) % 4)))
-        if payload.get("sub") != os.getenv("ADMIN_USERNAME", "Admin").strip() or int(payload.get("exp", 0)) < int(time.time()):
-            raise ValueError("expired session")
-        return payload
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(401, "Your session is invalid or expired. Sign in again.")
-
-SESSION_TTL_SECONDS = 12 * 60 * 60
-LOGIN_ATTEMPTS = {}
-LOGIN_ATTEMPTS_LOCK = threading.Lock()
-
-def _password_matches(password: str, encoded: str) -> bool:
     try:
         scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
         if scheme != "pbkdf2_sha256":
@@ -160,7 +114,7 @@ def current_admin_session(admin: dict = Depends(require_admin)):
     return {"authenticated": True, "username": admin["username"]}
 
 
-def emergency_translate(text: str, target: str) -> str:
+def emergency_translate(text: list[str], target: str) -> list[str]:
     """One optional OpenAI-compatible LLM call, only as fallback for local translation failure."""
     key, url, model = (os.getenv(k, "").strip() for k in ("LLM_API_KEY", "LLM_API_URL", "LLM_MODEL_ID"))
     if not (key and url and model):
@@ -225,8 +179,12 @@ async def _process_shorts(
         if not size: raise HTTPException(400, "Empty video.")
         probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(source)], capture_output=True, text=True)
         if probe.returncode: raise HTTPException(422, "Unable to read video. Check FFmpeg installation.")
-        duration = float(probe.stdout.strip())
-        if duration <= 0: raise HTTPException(422, "Invalid video duration.")
+        try:
+            duration = float(probe.stdout.strip())
+        except (TypeError, ValueError):
+            raise HTTPException(422, "Unable to determine video duration.")
+        if not math.isfinite(duration) or duration <= 0:
+            raise HTTPException(422, "Invalid video duration.")
 
         segments = []
         captions_available = False
@@ -444,7 +402,14 @@ async def create_background_job(
     with JOBS_LOCK:
         JOBS[job_id] = {"status": "queued", "message": "Upload received. Waiting for a processing worker.", "download_url": None}
         _persist_jobs_locked()
-    WORKERS.submit(_run_job, job_id, source_path, options)
+    try:
+        WORKERS.submit(_run_job, job_id, source_path, options)
+    except RuntimeError as exc:
+        with JOBS_LOCK:
+            JOBS.pop(job_id, None)
+            _persist_jobs_locked()
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(503, "The video processor is temporarily unavailable. Please retry shortly.") from exc
     return {"job_id": job_id, "status": "queued", "message": "Upload complete. Processing will continue in the background.", "status_url": f"/api/jobs/{job_id}"}
 
 @app.get("/api/jobs/{job_id}")
