@@ -79,7 +79,8 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 
 ### Automatic captions (optional)
 - Uses local **faster-whisper** speech recognition.
-- Caption modes: Original spoken language, English, and Hindi.
+- Caption modes: Original spoken language, English, Hindi, Spanish, Chinese (Simplified), Thai, and Indonesian.
+- Speech recognition and English translation run locally with faster-whisper. Other target-language translations use the optional LLM only when selected and when the detected spoken language differs from the requested target.
 - Caption templates: Auto recommend, Classic, Bold, and Minimal.
 - Caption colors: White, Yellow, Cyan, and Pink.
 - Caption sizes: Small, Medium, and Large.
@@ -184,6 +185,16 @@ flowchart TD
 │   └── next.config.mjs
 └── README.md
 ```
+
+## Windows 11 local one-command setup
+
+Run this in PowerShell. It installs Python 3.12, Node.js LTS and FFmpeg with winget when missing, downloads the local application, creates a private admin login, installs dependencies and opens the frontend and backend locally:
+
+```powershell
+irm https://raw.githubusercontent.com/pcmdk369/60sec/feature/windows-local-six-language/scripts/setup-windows.ps1 | iex
+```
+
+Open `http://127.0.0.1:3000`. The backend runs at `http://127.0.0.1:8000`. No public hosting is used. Add `LLMS_ENGINE_API_KEY`, `LLMS_ENGINE_API_URL`, and `LLMS_ENGINE_MODEL` to `backend/.env` only if you want on-demand translation into Hindi, Spanish, Chinese, Thai or Indonesian. Keep the key private and restart the backend after editing the file.
 
 ## Quick start
 
