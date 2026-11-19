@@ -91,11 +91,15 @@ Write-Host "Installing frontend packages..." -ForegroundColor Cyan
 Push-Location $frontend
 try { npm install; if ($LASTEXITCODE -ne 0) { throw "npm install failed." } } finally { Pop-Location }
 
-$backendCommand = "Set-Location '$backend'; .\.venv\Scripts\Activate.ps1; uvicorn app.main:app --host 127.0.0.1 --port 8000"
-$frontendCommand = "Set-Location '$frontend'; npm run dev -- --hostname 127.0.0.1"
-Start-Process powershell.exe -ArgumentList @("-NoExit","-ExecutionPolicy","Bypass","-Command",$backendCommand)
+$backendStart = Join-Path $root "start-backend.ps1"
+$frontendStart = Join-Path $root "start-frontend.ps1"
+$backendQuoted = $backend.Replace("'","''")
+$frontendQuoted = $frontend.Replace("'","''")
+@("Set-Location -LiteralPath '$backendQuoted'","& '.\.venv\Scripts\Activate.ps1'","uvicorn app.main:app --host 127.0.0.1 --port 8000") | Set-Content -Path $backendStart -Encoding UTF8
+@("Set-Location -LiteralPath '$frontendQuoted'","npm run dev -- --hostname 127.0.0.1") | Set-Content -Path $frontendStart -Encoding UTF8
+Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$backendStart`""
 Start-Sleep -Seconds 3
-Start-Process powershell.exe -ArgumentList @("-NoExit","-ExecutionPolicy","Bypass","-Command",$frontendCommand)
+Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$frontendStart`""
 
 Write-Host ""
 Write-Host "PCMDK369 60sec local setup finished." -ForegroundColor Green
