@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(encoding="utf-8-sig")
 
 
 SESSION_TTL_SECONDS = 12 * 60 * 60
