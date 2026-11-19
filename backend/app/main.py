@@ -124,7 +124,8 @@ def health():
         "status": "ok",
         "captions": "local-faster-whisper",
         "watermark": "Drama & Entertainment",
-        "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID")),
+        "emergency_llm_configured": bool((os.getenv("LLMS_ENGINE_API_KEY") or os.getenv("LLM_API_KEY")) and (os.getenv("LLMS_ENGINE_API_URL") or os.getenv("LLM_API_URL")) and (os.getenv("LLMS_ENGINE_MODEL") or os.getenv("LLM_MODEL_ID"))),
+        "caption_languages": ["original", "english", "hindi", "spanish", "chinese", "thai", "indonesian"],
         "admin_auth_configured": bool(os.getenv("ADMIN_USERNAME") and os.getenv("ADMIN_PASSWORD_HASH") and len(os.getenv("SESSION_SECRET", "")) >= 32),
     }
 
@@ -160,15 +161,17 @@ def current_admin_session(admin: dict = Depends(require_admin)):
     return {"authenticated": True, "username": admin["username"]}
 
 
-def emergency_translate(text: str, target: str) -> str:
-    """One optional OpenAI-compatible LLM call, only as fallback for local translation failure."""
-    key, url, model = (os.getenv(k, "").strip() for k in ("LLM_API_KEY", "LLM_API_URL", "LLM_MODEL_ID"))
+def emergency_translate(text: list[str], target: str) -> list[str]:
+    """Optional on-demand fallback for target languages not provided by local Whisper translation."""
+    key = (os.getenv("LLMS_ENGINE_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    url = (os.getenv("LLMS_ENGINE_API_URL") or os.getenv("LLM_API_URL") or "").strip()
+    model = (os.getenv("LLMS_ENGINE_MODEL") or os.getenv("LLM_MODEL_ID") or "").strip()
     if not (key and url and model):
-        raise RuntimeError("Hindi translation needs the optional emergency LLM fallback on this server, but it is not configured. Configure the three LLM_* backend environment variables or use Original/English.")
-    prompt = "Translate each subtitle segment into natural " + target + ". Keep timestamps and segment order exactly. Return ONLY JSON array of strings, one translation per input item. Input: " + json.dumps(text, ensure_ascii=False)
-    payload = json.dumps({"model": model, "messages": [{"role": "system", "content": "You are a subtitle translation fallback. Follow the requested output format exactly."}, {"role": "user", "content": prompt}], "temperature": 0.1}).encode()
+        raise RuntimeError("Translation to " + target + " needs the optional LLM fallback. Set LLMS_ENGINE_API_KEY, LLMS_ENGINE_API_URL and LLMS_ENGINE_MODEL, or choose Original/English.")
+    prompt = "Translate each subtitle segment into natural " + target + ". Return ONLY a JSON array of strings with exactly " + str(len(text)) + " items in the same order. Do not add commentary. Input: " + json.dumps(text, ensure_ascii=False)
+    payload = json.dumps({"model": model, "messages": [{"role": "system", "content": "You translate video subtitle segments accurately and preserve meaning, names and order. Return valid JSON only."}, {"role": "user", "content": prompt}], "temperature": 0.1}).encode()
     req = Request(url, data=payload, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, method="POST")
-    with urlopen(req, timeout=35) as response:
+    with urlopen(req, timeout=45) as response:
         data = json.loads(response.read().decode("utf-8"))
     content = data["choices"][0]["message"]["content"]
     match = re.search(r"\[.*\]", content, re.S)
@@ -203,7 +206,7 @@ async def _process_shorts(
     ext = Path(file.filename or "").suffix.lower()
     if ext not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
         raise HTTPException(415, "Upload MP4, MOV, MKV, WEBM or M4V.")
-    if caption_language not in {"original", "english", "hindi"} or caption_style not in {"auto", "classic", "bold", "minimal"} or caption_color not in {"white", "yellow", "cyan", "pink"} or caption_size not in {"small", "medium", "large"}:
+    if caption_language not in {"original", "english", "hindi", "spanish", "chinese", "thai", "indonesian"} or caption_style not in {"auto", "classic", "bold", "minimal"} or caption_color not in {"white", "yellow", "cyan", "pink"} or caption_size not in {"small", "medium", "large"}:
         raise HTTPException(400, "Invalid caption setting.")
     if output_resolution not in {"480p", "720p", "1080p", "2160p"} or encoding_priority not in {"fast", "balanced", "quality"} or framing not in {"portrait", "pad"}:
         raise HTTPException(400, "Invalid video quality setting.")
@@ -241,9 +244,12 @@ async def _process_shorts(
                 segments = [(float(s.start), float(s.end), s.text.strip()) for s in recognized if s.text.strip()]
                 if not segments:
                     raise RuntimeError("No speech was detected in the source audio.")
-                if caption_language == "hindi" and (info.language or "").lower() not in {"hi", "ur"}:
-                    translated = emergency_translate([s[2] for s in segments], "Hindi")
-                    segments = [(s[0], s[1], translated[i]) for i, s in enumerate(segments)]
+                target_languages = {"hindi": ("Hindi", {"hi", "ur"}), "spanish": ("Spanish", {"es"}), "chinese": ("Chinese", {"zh"}), "thai": ("Thai", {"th"}), "indonesian": ("Indonesian", {"id"})}
+                if caption_language in target_languages:
+                    target_name, source_codes = target_languages[caption_language]
+                    if (info.language or "").lower() not in source_codes:
+                        translated = emergency_translate([s[2] for s in segments], target_name)
+                        segments = [(s[0], s[1], translated[i]) for i, s in enumerate(segments)]
                 captions_available = bool(segments)
             except Exception as exc:
                 # Captions are optional: a speech/model/translation failure must not
