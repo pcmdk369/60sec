@@ -129,15 +129,21 @@ def _argos_translate(texts: list[str], source: str, target: str) -> list[str]:
         return list(texts)
     def translate_pair(src: str, dst: str):
         try:
-            return argostranslate.translate.get_translation_from_codes(src, dst)
+            translator = argostranslate.translate.get_translation_from_codes(src, dst)
         except Exception:
-            argostranslate.package.update_package_index()
-            available = argostranslate.package.get_available_packages()
-            package = next((p for p in available if p.from_code == src and p.to_code == dst), None)
-            if package is None:
-                raise RuntimeError(f"No Argos translation package is available for {src} to {dst}.")
-            argostranslate.package.install_from_path(package.download())
-            return argostranslate.translate.get_translation_from_codes(src, dst)
+            translator = None
+        if translator is not None:
+            return translator
+        argostranslate.package.update_package_index()
+        available = argostranslate.package.get_available_packages()
+        package = next((p for p in available if p.from_code == src and p.to_code == dst), None)
+        if package is None:
+            raise RuntimeError(f"No Argos translation package is available for {src} to {dst}.")
+        argostranslate.package.install_from_path(package.download())
+        translator = argostranslate.translate.get_translation_from_codes(src, dst)
+        if translator is None:
+            raise RuntimeError(f"Argos failed to load the installed {src} to {dst} package.")
+        return translator
     with TRANSLATION_LOCK:
         try:
             translator = translate_pair(source, target)
