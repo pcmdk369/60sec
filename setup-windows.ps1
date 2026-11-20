@@ -62,7 +62,7 @@ $rng.GetBytes($secretBytes)
 $sessionSecret = ([BitConverter]::ToString($secretBytes)).Replace("-", "").ToLowerInvariant()
 $rng.Dispose()
 
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $backendEnv = @"
 ADMIN_USERNAME=Admin
 ADMIN_PASSWORD_HASH=$passwordHash
