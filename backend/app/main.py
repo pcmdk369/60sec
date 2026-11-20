@@ -11,6 +11,9 @@ from dotenv import load_dotenv
 
 load_dotenv(encoding="utf-8-sig")
 
+MAX_UPLOAD_GB = max(1.0, float(os.getenv("MAX_UPLOAD_GB", "20")))
+MAX_UPLOAD_BYTES = int(MAX_UPLOAD_GB * 1024**3)
+
 
 SESSION_TTL_SECONDS = 12 * 60 * 60
 LOGIN_ATTEMPTS = {}
@@ -180,7 +183,7 @@ async def _process_shorts(
                 chunk = await file.read(1024 * 1024)
                 if not chunk: break
                 size += len(chunk)
-                if size > 2 * 1024**3: raise HTTPException(413, "Maximum upload size is 2 GB.")
+                if size > MAX_UPLOAD_BYTES: raise HTTPException(413, f"Maximum upload size is {MAX_UPLOAD_GB:g} GB.")
                 out.write(chunk)
         if not size: raise HTTPException(400, "Empty video.")
         probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(source)], capture_output=True, text=True)
@@ -384,8 +387,8 @@ async def create_background_job(
                 if not chunk:
                     break
                 size += len(chunk)
-                if size > 2 * 1024**3:
-                    raise HTTPException(413, "Maximum upload size is 2 GB.")
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, f"Maximum upload size is {MAX_UPLOAD_GB:g} GB.")
                 out.write(chunk)
         if not size:
             raise HTTPException(400, "Empty video.")
