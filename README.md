@@ -26,7 +26,7 @@
 
 ## Project overview
 
-**FRAMEFLOW — Drama & Entertainment Shorts Cutter** is a web application built with a **Next.js** frontend and a **Python FastAPI** backend. It splits a source video into clips of up to 60 seconds, reframes each clip to a vertical 9:16 canvas, adds the `Drama & Entertainment` watermark, optionally generates and burns captions, and packages the finished MP4 files into a ZIP archive.
+**FRAMEFLOW — Drama & Entertainment Shorts Cutter** is a web application built with a **Next.js** frontend and a **Python FastAPI** backend. It splits a source video into clips of up to 60 seconds, reframes each clip to a vertical 9:16 canvas, adds the `Drama Clip AI` watermark, optionally generates and burns captions, and packages the finished MP4 files into a ZIP archive.
 
 The browser receives a job ID after upload instead of waiting for the entire video encode in the upload request. The interface checks the job status every three seconds and starts the ZIP download when processing completes.
 
@@ -74,12 +74,12 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 - Reframes clips to a **1080 × 1920 vertical 9:16** canvas using scale-and-center-crop.
 - Encodes video as H.264 MP4 with AAC audio when an audio stream exists.
 - Preserves source audio when available.
-- Applies a permanent lower-right **Drama & Entertainment** watermark to each exported clip.
+- Applies a permanent lower-right **Drama Clip AI** watermark to each exported clip.
 - Packages all generated MP4 clips into a single ZIP download.
 
 ### Automatic captions (optional)
 - Uses local **faster-whisper** speech recognition.
-- Caption modes: Original spoken language, English, and Hindi.
+- Caption modes: Original spoken language, English, Hindi, Burmese (Myanmar), Thai, Spanish, and French.
 - Caption templates: Auto recommend, Classic, Bold, and Minimal.
 - Caption colors: White, Yellow, Cyan, and Pink.
 - Caption sizes: Small, Medium, and Large.
@@ -117,7 +117,7 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 | Frame rate | 30 fps |
 | Video preset | FFmpeg `veryfast` |
 | Video quality setting | CRF 23 |
-| Watermark | `Drama & Entertainment`, lower-right |
+| Watermark | `Drama Clip AI`, lower-right |
 | Output packaging | One ZIP containing MP4 clips |
 | Caption engine | faster-whisper, optional |
 | Job status polling | Every 3 seconds |
