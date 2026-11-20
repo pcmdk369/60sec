@@ -49,23 +49,45 @@ export default function Home() {
 
   useEffect(() => {
     let mounted = true;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12000);
+
     async function restoreSession() {
       const token = window.localStorage.getItem("frameflow_admin_token");
-      if (!token) { if (mounted) setAuthReady(true); return; }
+      if (!token) {
+        window.clearTimeout(timeout);
+        if (mounted) setAuthReady(true);
+        return;
+      }
       try {
         const response = await fetch(`${apiBase}/api/auth/session`, {
-          headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+          signal: controller.signal,
         });
         if (!response.ok) throw new Error("Session expired");
         const data = await response.json();
         if (mounted) setSession({ access_token: token, user: { username: data.username || "Admin" } });
       } catch {
+        // A sleeping/unreachable backend must never leave the entire app on
+        // the session-check screen. Remove the stale token and expose sign-in.
         window.localStorage.removeItem("frameflow_admin_token");
-        if (mounted) setSession(null);
-      } finally { if (mounted) setAuthReady(true); }
+        if (mounted) {
+          setSession(null);
+          setAuthError("Your saved session could not be verified. Sign in again when the video processor is online.");
+        }
+      } finally {
+        window.clearTimeout(timeout);
+        if (mounted) setAuthReady(true);
+      }
     }
+
     void restoreSession();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
   }, [apiBase]);
 
   useEffect(() => {
