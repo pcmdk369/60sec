@@ -29,6 +29,15 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install -r backend/requirements.txt
       - run: python -m compileall -q backend/app
+      - name: Install FFmpeg and pytest for end-to-end test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install pytest
+      - name: Run authenticated video-to-ZIP end-to-end test
+        env:
+          PYTHONPATH: backend
+        run: python -m pytest -q backend/tests
       - name: Smoke-test FastAPI app import and routes
         env:
           PYTHONPATH: backend
