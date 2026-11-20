@@ -298,8 +298,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 | Variable | Required | Description |
 |---|---|---|
-| `NEXT_PUBLIC_API_URL` | Yes for deployed frontend | Public base URL of the FastAPI service, without a trailing slash |
-| `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` | Yes for admin login | Public Google reCAPTCHA v2 checkbox site key; register the production Vercel domain |
+| `NEXT_PUBLIC_API_URL` | No | `http://127.0.0.1:8000` | Local FastAPI base URL; set only if you deliberately change the local backend address |
 
 Example:
 
@@ -329,69 +328,9 @@ NEXT_PUBLIC_API_URL=https://your-backend.example.com
 
 ## Deployment
 
-### Recommended simple deployment
+**Not required for this project setup.** The Windows 11 installer runs the Next.js frontend and FastAPI backend on the same PC using loopback addresses (`127.0.0.1`). No Vercel, Render, Supabase, public domain, cloud storage or hosted video-processing service is needed. The application is intentionally configured for local-only use in this workflow.
 
-- **Frontend:** Vercel, with the project root set to `frontend`.
-- **Backend:** Render or another Python host that supports FFmpeg and background processing.
-- **Persistent queue/storage:** not included in the current single-instance version; see production-readiness notes below.
-
-#### Admin login and robot verification
-
-1. Register a Google reCAPTCHA v2 checkbox site in the Google reCAPTCHA admin console and include the production Vercel hostname plus any Vercel alias used for testing.
-2. Add `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` to the Vercel project environment.
-3. Add `RECAPTCHA_SECRET_KEY` as a private environment variable in Render (or sync the `render.yaml` Blueprint and enter it securely).
-4. Confirm `NEXT_PUBLIC_ADMIN_EMAIL` in Vercel and `ADMIN_EMAIL` in Render both equal `support.pcmdkai@gmail.com`.
-5. In Supabase Authentication, create or recover the admin user for that email using the password reset flow. Add the exact production frontend URL to Supabase Auth URL Configuration → Redirect URLs so the reset link can return to the app. Never commit or share the password.
-6. Redeploy both services after changing environment variables. The login form intentionally stays disabled until reCAPTCHA is configured and verified server-side.
-
-#### Frontend deployment
-
-1. Import the GitHub repository into Vercel.
-2. Set the Root Directory to `frontend`.
-3. Add environment variable `NEXT_PUBLIC_API_URL` with the public URL of your deployed backend.
-4. Deploy the frontend.
-
-The `NEXT_PUBLIC_API_URL` value is embedded into the frontend at build time. Redeploy the frontend after changing it.
-
-#### Backend deployment
-
-For a Python web service, use the `backend` directory as the root where supported.
-
-**Build command**
-
-```bash
-pip install -r requirements.txt
-```
-
-**Start command**
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
-```
-
-Configure these backend environment variables:
-
-```dotenv
-CORS_ORIGINS=https://your-frontend.vercel.app
-VIDEO_WORKERS=1
-WHISPER_MODEL=base
-WHISPER_DEVICE=cpu
-WHISPER_COMPUTE_TYPE=int8
-```
-
-Replace the example frontend origin with the real deployed domain. If you use a custom domain, include its exact origin in `CORS_ORIGINS`. Ensure FFmpeg and FFprobe are installed in the backend runtime.
-
-### Deployment checklist
-
-- [ ] Frontend `NEXT_PUBLIC_API_URL` points to the live backend URL.
-- [ ] Backend `CORS_ORIGINS` includes the exact frontend origin.
-- [ ] `/health` returns a successful response.
-- [ ] FFmpeg and FFprobe are available in the backend container.
-- [ ] FFmpeg has the `drawtext` filter; captions additionally need `subtitles` / libass.
-- [ ] Backend disk space and memory are sufficient for source video, clips and ZIP.
-- [ ] Any optional LLM credentials are set only on the backend.
-- [ ] A test video has been processed end-to-end on the actual hosting provider.
-
+The frontend is available at `http://127.0.0.1:3000`; the backend is available at `http://127.0.0.1:8000`. Optional LLM translation is the only processing feature that contacts an external provider, and only when explicitly selected and a translation is needed.
 ## API reference
 
 The API is served by FastAPI. Interactive API documentation is available at `/docs` when enabled by the deployment.
