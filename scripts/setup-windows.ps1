@@ -69,6 +69,10 @@ if (-not (Test-Path $envFile)) {
     $passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
     try { $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer) }
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer) }
+    if ([string]::IsNullOrEmpty($plainPassword) -or $plainPassword.Length -lt 12) {
+        $plainPassword = $null
+        throw "Use an admin password with at least 12 characters."
+    }
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     $salt = New-Object byte[] 16
     $secretBytes = New-Object byte[] 48
