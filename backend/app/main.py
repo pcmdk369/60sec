@@ -3,10 +3,16 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body, Request as FastAPIRequest, Request as FastAPIRequest
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depends, Body, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
+from dotenv import load_dotenv
+
+load_dotenv(encoding="utf-8-sig")
+
+MAX_UPLOAD_GB = max(1.0, float(os.getenv("MAX_UPLOAD_GB", "20")))
+MAX_UPLOAD_BYTES = int(MAX_UPLOAD_GB * 1024**3)
 
 
 SESSION_TTL_SECONDS = 12 * 60 * 60
@@ -15,52 +21,6 @@ LOGIN_ATTEMPTS_LOCK = threading.Lock()
 
 def _password_matches(password: str, encoded: str) -> bool:
     """Verify PBKDF2-SHA256 format: pbkdf2_sha256$iterations$salt_hex$digest_hex."""
-    try:
-        scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
-        if scheme != "pbkdf2_sha256":
-            return False
-        rounds = int(iterations)
-        if rounds < 200_000 or rounds > 2_000_000:
-            return False
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), rounds).hex()
-        return hmac.compare_digest(actual, expected_hex)
-    except (ValueError, TypeError):
-        return False
-
-def _session_secret() -> bytes:
-    secret = os.getenv("SESSION_SECRET", "").strip()
-    if len(secret) < 32:
-        raise HTTPException(503, "Admin authentication is not configured. Set a strong SESSION_SECRET on the backend.")
-    return secret.encode("utf-8")
-
-def _issue_token(username: str) -> str:
-    payload = {"sub": username, "exp": int(time.time()) + SESSION_TTL_SECONDS, "nonce": secrets.token_hex(8)}
-    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
-    signature = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-    return body.decode() + "." + base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
-
-def _verify_token(token: str) -> dict:
-    try:
-        body_text, signature_text = token.split(".", 1)
-        body = body_text.encode()
-        signature = base64.urlsafe_b64decode(signature_text + "=" * (-len(signature_text) % 4))
-        expected = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError("invalid signature")
-        payload = json.loads(base64.urlsafe_b64decode(body_text + "=" * (-len(body_text) % 4)))
-        if payload.get("sub") != os.getenv("ADMIN_USERNAME", "Admin").strip() or int(payload.get("exp", 0)) < int(time.time()):
-            raise ValueError("expired session")
-        return payload
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(401, "Your session is invalid or expired. Sign in again.")
-
-SESSION_TTL_SECONDS = 12 * 60 * 60
-LOGIN_ATTEMPTS = {}
-LOGIN_ATTEMPTS_LOCK = threading.Lock()
-
-def _password_matches(password: str, encoded: str) -> bool:
     try:
         scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
         if scheme != "pbkdf2_sha256":
@@ -124,7 +84,9 @@ def health():
         "status": "ok",
         "captions": "local-faster-whisper",
         "watermark": "Drama & Entertainment",
-        "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID")),
+        "max_upload_gb": MAX_UPLOAD_GB,
+        "emergency_llm_configured": bool((os.getenv("LLMS_ENGINE_API_KEY") or os.getenv("LLM_API_KEY")) and (os.getenv("LLMS_ENGINE_API_URL") or os.getenv("LLM_API_URL")) and (os.getenv("LLMS_ENGINE_MODEL") or os.getenv("LLM_MODEL_ID"))),
+        "caption_languages": ["original", "english", "hindi", "spanish", "chinese", "thai", "indonesian"],
         "admin_auth_configured": bool(os.getenv("ADMIN_USERNAME") and os.getenv("ADMIN_PASSWORD_HASH") and len(os.getenv("SESSION_SECRET", "")) >= 32),
     }
 
@@ -160,15 +122,17 @@ def current_admin_session(admin: dict = Depends(require_admin)):
     return {"authenticated": True, "username": admin["username"]}
 
 
-def emergency_translate(text: str, target: str) -> str:
-    """One optional OpenAI-compatible LLM call, only as fallback for local translation failure."""
-    key, url, model = (os.getenv(k, "").strip() for k in ("LLM_API_KEY", "LLM_API_URL", "LLM_MODEL_ID"))
+def emergency_translate(text: list[str], target: str) -> list[str]:
+    """Optional on-demand fallback for target languages not provided by local Whisper translation."""
+    key = (os.getenv("LLMS_ENGINE_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    url = (os.getenv("LLMS_ENGINE_API_URL") or os.getenv("LLM_API_URL") or "").strip()
+    model = (os.getenv("LLMS_ENGINE_MODEL") or os.getenv("LLM_MODEL_ID") or "").strip()
     if not (key and url and model):
-        raise RuntimeError("Hindi translation needs the optional emergency LLM fallback on this server, but it is not configured. Configure the three LLM_* backend environment variables or use Original/English.")
-    prompt = "Translate each subtitle segment into natural " + target + ". Keep timestamps and segment order exactly. Return ONLY JSON array of strings, one translation per input item. Input: " + json.dumps(text, ensure_ascii=False)
-    payload = json.dumps({"model": model, "messages": [{"role": "system", "content": "You are a subtitle translation fallback. Follow the requested output format exactly."}, {"role": "user", "content": prompt}], "temperature": 0.1}).encode()
+        raise RuntimeError("Translation to " + target + " needs the optional LLM fallback. Set LLMS_ENGINE_API_KEY, LLMS_ENGINE_API_URL and LLMS_ENGINE_MODEL, or choose Original/English.")
+    prompt = "Translate each subtitle segment into natural " + target + ". Return ONLY a JSON array of strings with exactly " + str(len(text)) + " items in the same order. Do not add commentary. Input: " + json.dumps(text, ensure_ascii=False)
+    payload = json.dumps({"model": model, "messages": [{"role": "system", "content": "You translate video subtitle segments accurately and preserve meaning, names and order. Return valid JSON only."}, {"role": "user", "content": prompt}], "temperature": 0.1}).encode()
     req = Request(url, data=payload, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, method="POST")
-    with urlopen(req, timeout=35) as response:
+    with urlopen(req, timeout=45) as response:
         data = json.loads(response.read().decode("utf-8"))
     content = data["choices"][0]["message"]["content"]
     match = re.search(r"\[.*\]", content, re.S)
@@ -203,7 +167,7 @@ async def _process_shorts(
     ext = Path(file.filename or "").suffix.lower()
     if ext not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
         raise HTTPException(415, "Upload MP4, MOV, MKV, WEBM or M4V.")
-    if caption_language not in {"original", "english", "hindi"} or caption_style not in {"auto", "classic", "bold", "minimal"} or caption_color not in {"white", "yellow", "cyan", "pink"} or caption_size not in {"small", "medium", "large"}:
+    if caption_language not in {"original", "english", "hindi", "spanish", "chinese", "thai", "indonesian"} or caption_style not in {"auto", "classic", "bold", "minimal"} or caption_color not in {"white", "yellow", "cyan", "pink"} or caption_size not in {"small", "medium", "large"}:
         raise HTTPException(400, "Invalid caption setting.")
     if output_resolution not in {"480p", "720p", "1080p", "2160p"} or encoding_priority not in {"fast", "balanced", "quality"} or framing not in {"portrait", "pad"}:
         raise HTTPException(400, "Invalid video quality setting.")
@@ -220,7 +184,7 @@ async def _process_shorts(
                 chunk = await file.read(1024 * 1024)
                 if not chunk: break
                 size += len(chunk)
-                if size > 2 * 1024**3: raise HTTPException(413, "Maximum upload size is 2 GB.")
+                if size > MAX_UPLOAD_BYTES: raise HTTPException(413, f"Maximum upload size is {MAX_UPLOAD_GB:g} GB.")
                 out.write(chunk)
         if not size: raise HTTPException(400, "Empty video.")
         probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(source)], capture_output=True, text=True)
@@ -241,9 +205,12 @@ async def _process_shorts(
                 segments = [(float(s.start), float(s.end), s.text.strip()) for s in recognized if s.text.strip()]
                 if not segments:
                     raise RuntimeError("No speech was detected in the source audio.")
-                if caption_language == "hindi" and (info.language or "").lower() not in {"hi", "ur"}:
-                    translated = emergency_translate([s[2] for s in segments], "Hindi")
-                    segments = [(s[0], s[1], translated[i]) for i, s in enumerate(segments)]
+                target_languages = {"hindi": ("Hindi", {"hi"}), "spanish": ("Spanish", {"es"}), "chinese": ("Chinese", {"zh"}), "thai": ("Thai", {"th"}), "indonesian": ("Indonesian", {"id"})}
+                if caption_language in target_languages:
+                    target_name, source_codes = target_languages[caption_language]
+                    if (info.language or "").lower() not in source_codes:
+                        translated = emergency_translate([s[2] for s in segments], target_name)
+                        segments = [(s[0], s[1], translated[i]) for i, s in enumerate(segments)]
                 captions_available = bool(segments)
             except Exception as exc:
                 # Captions are optional: a speech/model/translation failure must not
@@ -421,8 +388,8 @@ async def create_background_job(
                 if not chunk:
                     break
                 size += len(chunk)
-                if size > 2 * 1024**3:
-                    raise HTTPException(413, "Maximum upload size is 2 GB.")
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, f"Maximum upload size is {MAX_UPLOAD_GB:g} GB.")
                 out.write(chunk)
         if not size:
             raise HTTPException(400, "Empty video.")

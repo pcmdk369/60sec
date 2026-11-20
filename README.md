@@ -45,7 +45,7 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 | Video processing | FFmpeg and FFprobe |
 | Speech recognition | faster-whisper (optional captions) |
 | Output | MP4 clips inside a ZIP archive |
-| Upload limit in application | 2 GB; hosting providers may enforce lower limits |
+| Upload limit in application | 20 GB by default for local processing; configurable |
 
 ## Contents
 
@@ -79,7 +79,8 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 
 ### Automatic captions (optional)
 - Uses local **faster-whisper** speech recognition.
-- Caption modes: Original spoken language, English, and Hindi.
+- Caption modes: Original spoken language, English, Hindi, Spanish, Chinese (Simplified), Thai, and Indonesian.
+- Speech recognition and English translation run locally with faster-whisper. Other target-language translations use the optional LLM only when selected and when the detected spoken language differs from the requested target.
 - Caption templates: Auto recommend, Classic, Bold, and Minimal.
 - Caption colors: White, Yellow, Cyan, and Pink.
 - Caption sizes: Small, Medium, and Large.
@@ -98,7 +99,7 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 - Responsive creator-focused interface.
 - Video selection and drag-and-drop upload.
 - Local video preview before upload.
-- File extension, empty-file and 2 GB application-limit validation.
+- File extension, empty-file and configured local upload-size validation (20 GiB default).
 - Backend connection indicator and refresh action.
 - Caption settings with a style sample preview.
 - Error and job status messages.
@@ -107,7 +108,7 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 
 | Setting | Current behaviour |
 |---|---|
-| Maximum upload size | 2 GB application limit |
+| Maximum upload size | 20 GB by default; configurable with `MAX_UPLOAD_GB` |
 | Accepted extensions | `.mp4`, `.mov`, `.mkv`, `.webm`, `.m4v` |
 | Segment duration | 60 seconds maximum |
 | Aspect ratio | 9:16 |
@@ -122,7 +123,7 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 | Caption engine | faster-whisper, optional |
 | Job status polling | Every 3 seconds |
 
-The 2 GB application limit does not override the request-size, execution-time, memory, CPU or disk limits of the selected hosting provider.
+The configured local upload limit does not override the available disk space, memory, CPU or filesystem limits of the PC.
 
 ## How it works
 
@@ -184,6 +185,16 @@ flowchart TD
 │   └── next.config.mjs
 └── README.md
 ```
+
+## Windows 11 local one-command setup
+
+Run this in PowerShell. It installs Python 3.12, Node.js LTS and FFmpeg with winget when missing, downloads the local application, creates a private admin login, installs dependencies and opens the frontend and backend locally:
+
+```powershell
+irm https://raw.githubusercontent.com/pcmdk369/60sec/feature/windows-local-six-language/scripts/setup-windows.ps1 | iex
+```
+
+Open `http://127.0.0.1:3000`. The backend runs at `http://127.0.0.1:8000`. No public hosting is used. Add `LLMS_ENGINE_API_KEY`, `LLMS_ENGINE_API_URL`, and `LLMS_ENGINE_MODEL` to `backend/.env` only if you want on-demand translation into Hindi, Spanish, Chinese, Thai or Indonesian. Keep the key private and restart the backend after editing the file.
 
 ## Quick start
 
@@ -287,8 +298,8 @@ Open [http://localhost:3000](http://localhost:3000).
 
 | Variable | Required | Description |
 |---|---|---|
-| `NEXT_PUBLIC_API_URL` | Yes for deployed frontend | Public base URL of the FastAPI service, without a trailing slash |
-| `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` | Yes for admin login | Public Google reCAPTCHA v2 checkbox site key; register the production Vercel domain |
+| `NEXT_PUBLIC_API_URL` | No | `http://127.0.0.1:8000` | Local FastAPI base URL; set only if you deliberately change the local backend address |
+| `NEXT_PUBLIC_MAX_UPLOAD_GB` | No | `20` | Frontend upload-size limit in GiB; keep in sync with backend `MAX_UPLOAD_GB` |
 
 Example:
 
@@ -300,87 +311,28 @@ NEXT_PUBLIC_API_URL=https://your-backend.example.com
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `CORS_ORIGINS` | For deployment | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated allowed frontend origins |
-| `RECAPTCHA_SECRET_KEY` | Yes for admin login | Unset | Private Google reCAPTCHA secret; set only in Render, never in frontend or Git |
-| `SUPABASE_URL` | Yes for admin access | Unset | Supabase project URL used to validate admin sessions |
-| `SUPABASE_PUBLISHABLE_KEY` | Yes for admin access | Unset | Supabase publishable key used by backend auth validation |
-| `ADMIN_EMAIL` | Yes for admin access | Unset | The single allowed admin email address |
+| `ADMIN_USERNAME` | Yes | `Admin` | Local admin username created by the Windows installer |
+| `ADMIN_PASSWORD_HASH` | Yes | Generated by installer | PBKDF2-SHA256 password hash; do not replace with a plaintext password |
+| `SESSION_SECRET` | Yes | Generated by installer | Random signing secret for local admin sessions |
+| `CORS_ORIGINS` | No | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated allowed frontend origins |
 | `VIDEO_WORKERS` | No | `1` | Maximum simultaneous background video jobs |
+| `MAX_UPLOAD_GB` | No | `20` | Maximum local source video upload size in GiB |
 | `JOB_STORAGE_DIR` | No | System temporary directory | Root directory for job files |
-| `WHISPER_MODEL` | No | `base` | faster-whisper model name |
-| `WHISPER_DEVICE` | No | `cpu` | Whisper device, e.g. CPU |
+| `WHISPER_MODEL` | No | `base` | Local faster-whisper model name |
+| `WHISPER_DEVICE` | No | `cpu` | Whisper device |
 | `WHISPER_COMPUTE_TYPE` | No | `int8` | Whisper compute type |
-| `LLM_API_KEY` | Hindi fallback only | Unset | Secret API key for optional OpenAI-compatible chat completions endpoint |
-| `LLM_API_URL` | Hindi fallback only | Unset | Full chat-completions endpoint URL |
-| `LLM_MODEL_ID` | Hindi fallback only | Unset | Provider model identifier |
+| `LLMS_ENGINE_API_KEY` | Optional | Unset | Private key for the emergency-only translation provider |
+| `LLMS_ENGINE_API_URL` | Optional | Unset | Full OpenAI-compatible chat-completions endpoint |
+| `LLMS_ENGINE_MODEL` | Optional | Unset | Provider model identifier |
+| `LLM_API_KEY` / `LLM_API_URL` / `LLM_MODEL_ID` | Legacy aliases | Unset | Backward-compatible names for the optional translation provider |
 
-**Never commit API keys to GitHub.** Set secrets in the backend hosting provider's environment configuration. Do not put secrets in `NEXT_PUBLIC_*` variables.
+**Never commit .env files, API keys, password hashes or session secrets to GitHub.** The Windows installer creates a local .env file and the repository .gitignore excludes it. Keep provider credentials in the backend only; never put them in NEXT_PUBLIC_* variables.
 
 ## Deployment
 
-### Recommended simple deployment
+**Not required for this project setup.** The Windows 11 installer runs the Next.js frontend and FastAPI backend on the same PC using loopback addresses (`127.0.0.1`). No Vercel, Render, Supabase, public domain, cloud storage or hosted video-processing service is needed. The application is intentionally configured for local-only use in this workflow.
 
-- **Frontend:** Vercel, with the project root set to `frontend`.
-- **Backend:** Render or another Python host that supports FFmpeg and background processing.
-- **Persistent queue/storage:** not included in the current single-instance version; see production-readiness notes below.
-
-#### Admin login and robot verification
-
-1. Register a Google reCAPTCHA v2 checkbox site in the Google reCAPTCHA admin console and include the production Vercel hostname plus any Vercel alias used for testing.
-2. Add `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` to the Vercel project environment.
-3. Add `RECAPTCHA_SECRET_KEY` as a private environment variable in Render (or sync the `render.yaml` Blueprint and enter it securely).
-4. Confirm `NEXT_PUBLIC_ADMIN_EMAIL` in Vercel and `ADMIN_EMAIL` in Render both equal `support.pcmdkai@gmail.com`.
-5. In Supabase Authentication, create or recover the admin user for that email using the password reset flow. Add the exact production frontend URL to Supabase Auth URL Configuration → Redirect URLs so the reset link can return to the app. Never commit or share the password.
-6. Redeploy both services after changing environment variables. The login form intentionally stays disabled until reCAPTCHA is configured and verified server-side.
-
-#### Frontend deployment
-
-1. Import the GitHub repository into Vercel.
-2. Set the Root Directory to `frontend`.
-3. Add environment variable `NEXT_PUBLIC_API_URL` with the public URL of your deployed backend.
-4. Deploy the frontend.
-
-The `NEXT_PUBLIC_API_URL` value is embedded into the frontend at build time. Redeploy the frontend after changing it.
-
-#### Backend deployment
-
-For a Python web service, use the `backend` directory as the root where supported.
-
-**Build command**
-
-```bash
-pip install -r requirements.txt
-```
-
-**Start command**
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
-```
-
-Configure these backend environment variables:
-
-```dotenv
-CORS_ORIGINS=https://your-frontend.vercel.app
-VIDEO_WORKERS=1
-WHISPER_MODEL=base
-WHISPER_DEVICE=cpu
-WHISPER_COMPUTE_TYPE=int8
-```
-
-Replace the example frontend origin with the real deployed domain. If you use a custom domain, include its exact origin in `CORS_ORIGINS`. Ensure FFmpeg and FFprobe are installed in the backend runtime.
-
-### Deployment checklist
-
-- [ ] Frontend `NEXT_PUBLIC_API_URL` points to the live backend URL.
-- [ ] Backend `CORS_ORIGINS` includes the exact frontend origin.
-- [ ] `/health` returns a successful response.
-- [ ] FFmpeg and FFprobe are available in the backend container.
-- [ ] FFmpeg has the `drawtext` filter; captions additionally need `subtitles` / libass.
-- [ ] Backend disk space and memory are sufficient for source video, clips and ZIP.
-- [ ] Any optional LLM credentials are set only on the backend.
-- [ ] A test video has been processed end-to-end on the actual hosting provider.
-
+The frontend is available at `http://127.0.0.1:3000`; the backend is available at `http://127.0.0.1:8000`. Optional LLM translation is the only processing feature that contacts an external provider, and only when explicitly selected and a translation is needed.
 ## API reference
 
 The API is served by FastAPI. Interactive API documentation is available at `/docs` when enabled by the deployment.
@@ -442,9 +394,9 @@ Downloads the generated ZIP when the job is complete. Returns HTTP `409` if the 
 
 - **Original:** recognizes speech in its detected language.
 - **English:** uses faster-whisper's translation task to produce English text.
-- **Hindi:** if speech is detected as Hindi or Urdu, local recognition is used. For other detected languages, the optional emergency LLM fallback is used to translate recognized segments into Hindi.
-- The optional LLM fallback is not used for ordinary cutting, Original captions or English captions.
-- The LLM fallback has a 35-second HTTP timeout. Provider-specific limits and billing still apply.
+- **Hindi, Spanish, Chinese (Simplified), Thai and Indonesian:** local speech recognition detects the spoken language. If it is already the selected target language, the recognized text is used directly; otherwise the optional emergency LLM translates the recognized segments into the selected target language.
+- The optional LLM is not used for ordinary cutting, Original captions or English captions. It is called only when one of those five translated caption targets is selected and a translation is actually needed.
+- The LLM fallback has a 45-second HTTP timeout. Provider compatibility, rate limits and billing still apply.
 - Caption text is burned into the exported video; it is not a separate editable subtitle file.
 - The frontend caption preview is a style sample, not a live preview of the encoded video.
 
@@ -520,7 +472,7 @@ The current job queue is in-memory and not durable. A backend restart, redeploy,
 
 ### Upload fails for large videos
 
-The app's maximum is 2 GB, but the hosting provider may impose a lower request-body limit or insufficient temporary disk. Check provider logs and resource limits.
+The default local maximum is 20 GB. Increase `MAX_UPLOAD_GB` and `NEXT_PUBLIC_MAX_UPLOAD_GB` together only if the PC has enough free disk space and memory.
 
 ## CI checks
 
