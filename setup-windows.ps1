@@ -21,7 +21,15 @@ Set-Location $root
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Ensure-WingetPackage "OpenJS.NodeJS.LTS" "Node.js LTS" }
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { Refresh-Path }
-if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command py -ErrorAction SilentlyContinue)) { Ensure-WingetPackage "Python.Python.3.11" "Python 3.11" }
+if (Get-Command py -ErrorAction SilentlyContinue) {
+  & py -3.11 --version 2>$null
+  if ($LASTEXITCODE -ne 0) { Ensure-WingetPackage "Python.Python.3.11" "Python 3.11" }
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+  $pythonVersionText = & python --version
+  if ($pythonVersionText -notmatch "3\\.(1[1-9]|[2-9][0-9])") { Ensure-WingetPackage "Python.Python.3.11" "Python 3.11" }
+} else {
+  Ensure-WingetPackage "Python.Python.3.11" "Python 3.11"
+}
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Ensure-WingetPackage "Gyan.FFmpeg.Shared" "FFmpeg" }
 
 $python = if (Get-Command py -ErrorAction SilentlyContinue) { (Get-Command py).Source } else { (Get-Command python).Source }
