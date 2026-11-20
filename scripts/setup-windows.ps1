@@ -75,8 +75,15 @@ $backendStart = Join-Path $root "start-backend.ps1"
 $frontendStart = Join-Path $root "start-frontend.ps1"
 $backendQuoted = $backend.Replace("'","''")
 $frontendQuoted = $frontend.Replace("'","''")
-@("Set-Location -LiteralPath '$backendQuoted'","& '.\.venv\Scripts\Activate.ps1'","uvicorn app.main:app --host 127.0.0.1 --port 8000") | Set-Content -Path $backendStart -Encoding UTF8
-@("Set-Location -LiteralPath '$frontendQuoted'","npm run dev -- --hostname 127.0.0.1") | Set-Content -Path $frontendStart -Encoding UTF8
+@"
+Set-Location -LiteralPath '$backendQuoted'
+& '.\.venv\Scripts\Activate.ps1'
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+"@ | Set-Content -Path $backendStart -Encoding UTF8
+@"
+Set-Location -LiteralPath '$frontendQuoted'
+npm run dev -- --hostname 127.0.0.1
+"@ | Set-Content -Path $frontendStart -Encoding UTF8
 Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$backendStart`""
 Start-Sleep -Seconds 3
 Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$frontendStart`""
