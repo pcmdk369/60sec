@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/windows-local-six-language]
   pull_request:
     branches: [main]
 
@@ -33,3 +33,23 @@ jobs:
         env:
           PYTHONPATH: backend
         run: python -c "from app.main import app; paths = {route.path for route in app.routes}; assert '/health' in paths and '/api/auth/verify-captcha' in paths and '/api/jobs' in paths and '/api/jobs/{job_id}' in paths and '/api/jobs/{job_id}/download' in paths, paths; print('FastAPI import, admin captcha, and background job routes OK')"
+
+  windows-setup-script:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate Windows setup script syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "scripts/setup-windows.ps1",
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+          Write-Host "Windows setup script syntax is valid."
