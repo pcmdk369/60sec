@@ -7,6 +7,9 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Header, Depe
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 SESSION_TTL_SECONDS = 12 * 60 * 60
@@ -15,52 +18,6 @@ LOGIN_ATTEMPTS_LOCK = threading.Lock()
 
 def _password_matches(password: str, encoded: str) -> bool:
     """Verify PBKDF2-SHA256 format: pbkdf2_sha256$iterations$salt_hex$digest_hex."""
-    try:
-        scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
-        if scheme != "pbkdf2_sha256":
-            return False
-        rounds = int(iterations)
-        if rounds < 200_000 or rounds > 2_000_000:
-            return False
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), rounds).hex()
-        return hmac.compare_digest(actual, expected_hex)
-    except (ValueError, TypeError):
-        return False
-
-def _session_secret() -> bytes:
-    secret = os.getenv("SESSION_SECRET", "").strip()
-    if len(secret) < 32:
-        raise HTTPException(503, "Admin authentication is not configured. Set a strong SESSION_SECRET on the backend.")
-    return secret.encode("utf-8")
-
-def _issue_token(username: str) -> str:
-    payload = {"sub": username, "exp": int(time.time()) + SESSION_TTL_SECONDS, "nonce": secrets.token_hex(8)}
-    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
-    signature = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-    return body.decode() + "." + base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
-
-def _verify_token(token: str) -> dict:
-    try:
-        body_text, signature_text = token.split(".", 1)
-        body = body_text.encode()
-        signature = base64.urlsafe_b64decode(signature_text + "=" * (-len(signature_text) % 4))
-        expected = hmac.new(_session_secret(), body, hashlib.sha256).digest()
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError("invalid signature")
-        payload = json.loads(base64.urlsafe_b64decode(body_text + "=" * (-len(body_text) % 4)))
-        if payload.get("sub") != os.getenv("ADMIN_USERNAME", "Admin").strip() or int(payload.get("exp", 0)) < int(time.time()):
-            raise ValueError("expired session")
-        return payload
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(401, "Your session is invalid or expired. Sign in again.")
-
-SESSION_TTL_SECONDS = 12 * 60 * 60
-LOGIN_ATTEMPTS = {}
-LOGIN_ATTEMPTS_LOCK = threading.Lock()
-
-def _password_matches(password: str, encoded: str) -> bool:
     try:
         scheme, iterations, salt_hex, expected_hex = encoded.split("$", 3)
         if scheme != "pbkdf2_sha256":
@@ -123,7 +80,9 @@ def health():
     return {
         "status": "ok",
         "captions": "local-faster-whisper",
-        "watermark": "Drama & Entertainment",
+        "watermark": "Drama Clip AI",
+        "caption_languages": ["original", "english", "hindi", "burmese", "thai", "spanish", "french"],
+        "translation_engine": "Argos Translate local-first; optional emergency LLM fallback",
         "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID")),
         "admin_auth_configured": bool(os.getenv("ADMIN_USERNAME") and os.getenv("ADMIN_PASSWORD_HASH") and len(os.getenv("SESSION_SECRET", "")) >= 32),
     }
@@ -160,13 +119,43 @@ def current_admin_session(admin: dict = Depends(require_admin)):
     return {"authenticated": True, "username": admin["username"]}
 
 
-def emergency_translate(text: str, target: str) -> str:
-    """One optional OpenAI-compatible LLM call, only as fallback for local translation failure."""
+TRANSLATION_LOCK = threading.Lock()
+
+def _argos_translate(texts: list[str], source: str, target: str) -> list[str]:
+    """Translate locally with Argos Translate. Installs a missing language pair on demand."""
+    import argostranslate.package
+    import argostranslate.translate
+    if source == target:
+        return list(texts)
+    def translate_pair(src: str, dst: str):
+        try:
+            return argostranslate.translate.get_translation_from_codes(src, dst)
+        except Exception:
+            argostranslate.package.update_package_index()
+            available = argostranslate.package.get_available_packages()
+            package = next((p for p in available if p.from_code == src and p.to_code == dst), None)
+            if package is None:
+                raise RuntimeError(f"No Argos translation package is available for {src} to {dst}.")
+            argostranslate.package.install_from_path(package.download())
+            return argostranslate.translate.get_translation_from_codes(src, dst)
+    with TRANSLATION_LOCK:
+        try:
+            translator = translate_pair(source, target)
+            return [translator.translate(item) for item in texts]
+        except Exception as direct_error:
+            if source == "en" or target == "en":
+                raise direct_error
+            to_english = translate_pair(source, "en")
+            from_english = translate_pair("en", target)
+            return [from_english.translate(to_english.translate(item)) for item in texts]
+
+def emergency_translate(texts: list[str], target: str) -> list[str]:
+    """Optional OpenAI-compatible fallback; called only after local translation fails."""
     key, url, model = (os.getenv(k, "").strip() for k in ("LLM_API_KEY", "LLM_API_URL", "LLM_MODEL_ID"))
     if not (key and url and model):
-        raise RuntimeError("Hindi translation needs the optional emergency LLM fallback on this server, but it is not configured. Configure the three LLM_* backend environment variables or use Original/English.")
-    prompt = "Translate each subtitle segment into natural " + target + ". Keep timestamps and segment order exactly. Return ONLY JSON array of strings, one translation per input item. Input: " + json.dumps(text, ensure_ascii=False)
-    payload = json.dumps({"model": model, "messages": [{"role": "system", "content": "You are a subtitle translation fallback. Follow the requested output format exactly."}, {"role": "user", "content": prompt}], "temperature": 0.1}).encode()
+        raise RuntimeError("Local translation failed and emergency LLM is not configured. Install Argos language packages or configure all three LLM_* variables.")
+    prompt = "Translate these subtitle segments into natural " + target + ". Return ONLY a JSON array with exactly " + str(len(texts)) + " strings, preserving order. Segments: " + json.dumps(texts, ensure_ascii=False)
+    payload = json.dumps({"model": model, "messages": [{"role": "system", "content": "Return only a valid JSON array of translated strings."}, {"role": "user", "content": prompt}], "temperature": 0.1}).encode()
     req = Request(url, data=payload, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, method="POST")
     with urlopen(req, timeout=35) as response:
         data = json.loads(response.read().decode("utf-8"))
@@ -175,9 +164,9 @@ def emergency_translate(text: str, target: str) -> str:
     if not match:
         raise RuntimeError("Emergency LLM returned an invalid translation response.")
     result = json.loads(match.group(0))
-    if not isinstance(result, list) or len(result) != len(text):
+    if not isinstance(result, list) or len(result) != len(texts):
         raise RuntimeError("Emergency LLM returned the wrong number of caption segments.")
-    return [str(x) for x in result]
+    return [str(item) for item in result]
 
 def make_srt(segments, path: Path):
     def stamp(seconds):
@@ -203,7 +192,7 @@ async def _process_shorts(
     ext = Path(file.filename or "").suffix.lower()
     if ext not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
         raise HTTPException(415, "Upload MP4, MOV, MKV, WEBM or M4V.")
-    if caption_language not in {"original", "english", "hindi"} or caption_style not in {"auto", "classic", "bold", "minimal"} or caption_color not in {"white", "yellow", "cyan", "pink"} or caption_size not in {"small", "medium", "large"}:
+    if caption_language not in {"original", "english", "hindi", "burmese", "thai", "spanish", "french"} or caption_style not in {"auto", "classic", "bold", "minimal"} or caption_color not in {"white", "yellow", "cyan", "pink"} or caption_size not in {"small", "medium", "large"}:
         raise HTTPException(400, "Invalid caption setting.")
     if output_resolution not in {"480p", "720p", "1080p", "2160p"} or encoding_priority not in {"fast", "balanced", "quality"} or framing not in {"portrait", "pad"}:
         raise HTTPException(400, "Invalid video quality setting.")
@@ -236,13 +225,25 @@ async def _process_shorts(
                 from faster_whisper import WhisperModel
                 model_name = os.getenv("WHISPER_MODEL", "base")
                 model = WhisperModel(model_name, device=os.getenv("WHISPER_DEVICE", "cpu"), compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "int8"))
-                task = "translate" if caption_language == "english" else "transcribe"
-                recognized, info = model.transcribe(str(source), task=task, vad_filter=True, beam_size=3)
+                if caption_language == "english":
+                    recognized, info = model.transcribe(str(source), task="translate", vad_filter=True, beam_size=3)
+                    source_code = "en"
+                else:
+                    recognized, info = model.transcribe(str(source), task="transcribe", vad_filter=True, beam_size=3)
+                    source_code = (info.language or "en").lower()
                 segments = [(float(s.start), float(s.end), s.text.strip()) for s in recognized if s.text.strip()]
                 if not segments:
                     raise RuntimeError("No speech was detected in the source audio.")
-                if caption_language == "hindi" and (info.language or "").lower() not in {"hi", "ur"}:
-                    translated = emergency_translate([s[2] for s in segments], "Hindi")
+                target_codes = {"hindi": "hi", "burmese": "my", "thai": "th", "spanish": "es", "french": "fr"}
+                if caption_language in target_codes and source_code != target_codes[caption_language]:
+                    target_code = target_codes[caption_language]
+                    try:
+                        translated = _argos_translate([s[2] for s in segments], source_code, target_code)
+                    except Exception as local_error:
+                        try:
+                            translated = emergency_translate([s[2] for s in segments], caption_language.title())
+                        except Exception as fallback_error:
+                            raise RuntimeError(f"Local translation failed ({str(local_error)[:160]}). Emergency fallback failed ({str(fallback_error)[:160]}).") from fallback_error
                     segments = [(s[0], s[1], translated[i]) for i, s in enumerate(segments)]
                 captions_available = bool(segments)
             except Exception as exc:
@@ -255,7 +256,7 @@ async def _process_shorts(
         clips = work / "clips"; clips.mkdir()
         # Use a text file so punctuation such as '&' is passed literally to FFmpeg.
         watermark_file = work / "watermark.txt"
-        watermark_file.write_text("Drama & Entertainment", encoding="utf-8")
+        watermark_file.write_text("Drama Clip AI", encoding="utf-8")
         watermark_path = str(watermark_file).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
         count = max(1, math.ceil(duration / 60))
         color = {"white": "&H00FFFFFF", "yellow": "&H0000FFFF", "cyan": "&H00FFFF00", "pink": "&H00C0A0FF"}[caption_color]
