@@ -51,12 +51,19 @@ if ($LASTEXITCODE -ne 0) { throw "npm install failed." }
 Pop-Location
 
 $alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*-_"
-$adminPassword = -join (1..24 | ForEach-Object { $alphabet[[System.Security.Cryptography.RandomNumberGenerator]::GetInt32($alphabet.Length)] })
-$salt = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(16)).ToLowerInvariant()
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$adminPassword = -join (1..24 | ForEach-Object { $alphabet[(Get-Random -Minimum 0 -Maximum $alphabet.Length)] })
+$saltBytes = New-Object byte[] 16
+$rng.GetBytes($saltBytes)
+$salt = ([BitConverter]::ToString($saltBytes)).Replace("-", "").ToLowerInvariant()
 $passwordHash = & $venvPython -c 'import hashlib,sys; print("pbkdf2_sha256$310000$"+sys.argv[2]+"$"+hashlib.pbkdf2_hmac("sha256",sys.argv[1].encode(),bytes.fromhex(sys.argv[2]),310000).hex())' $adminPassword $salt
-$sessionSecret = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(48)).ToLowerInvariant()
+$secretBytes = New-Object byte[] 48
+$rng.GetBytes($secretBytes)
+$sessionSecret = ([BitConverter]::ToString($secretBytes)).Replace("-", "").ToLowerInvariant()
+$rng.Dispose()
 
-@"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$backendEnv = @"
 ADMIN_USERNAME=Admin
 ADMIN_PASSWORD_HASH=$passwordHash
 SESSION_SECRET=$sessionSecret
@@ -66,9 +73,9 @@ WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
 VIDEO_WORKERS=1
 JOB_STORAGE_DIR=$backend
-"@ | Set-Content -Path (Join-Path $backend ".env") -Encoding UTF8
-
-"NEXT_PUBLIC_API_URL=http://127.0.0.1:8000" | Set-Content -Path (Join-Path $frontend ".env.local") -Encoding UTF8
+"@
+[System.IO.File]::WriteAllText((Join-Path $backend ".env"), $backendEnv, $utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $frontend ".env.local"), "NEXT_PUBLIC_API_URL=http://127.0.0.1:8000", $utf8NoBom)
 @"
 FRAMEFLOW LOCAL ADMIN
 Username: Admin
