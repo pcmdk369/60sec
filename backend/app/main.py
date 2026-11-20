@@ -84,6 +84,7 @@ def health():
         "status": "ok",
         "captions": "local-faster-whisper",
         "watermark": "Drama & Entertainment",
+        "max_upload_gb": MAX_UPLOAD_GB,
         "emergency_llm_configured": bool((os.getenv("LLMS_ENGINE_API_KEY") or os.getenv("LLM_API_KEY")) and (os.getenv("LLMS_ENGINE_API_URL") or os.getenv("LLM_API_URL")) and (os.getenv("LLMS_ENGINE_MODEL") or os.getenv("LLM_MODEL_ID"))),
         "caption_languages": ["original", "english", "hindi", "spanish", "chinese", "thai", "indonesian"],
         "admin_auth_configured": bool(os.getenv("ADMIN_USERNAME") and os.getenv("ADMIN_PASSWORD_HASH") and len(os.getenv("SESSION_SECRET", "")) >= 32),
