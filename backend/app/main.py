@@ -82,7 +82,7 @@ def health():
         "captions": "local-faster-whisper",
         "watermark": "Drama Clip AI",
         "caption_languages": ["original", "english", "hindi", "burmese", "thai", "spanish", "french"],
-        "translation_engine": "Argos Translate local-first; optional emergency LLM fallback",
+        "translation_engine": "Argos local-first for available pairs; optional emergency LLM fallback for unsupported pairs such as Burmese",
         "emergency_llm_configured": bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_API_URL") and os.getenv("LLM_MODEL_ID")),
         "admin_auth_configured": bool(os.getenv("ADMIN_USERNAME") and os.getenv("ADMIN_PASSWORD_HASH") and len(os.getenv("SESSION_SECRET", "")) >= 32),
     }
