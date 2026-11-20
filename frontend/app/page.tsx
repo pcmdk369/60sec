@@ -2,7 +2,8 @@
 
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useRef, useState } from "react";
 
-const MAX_SIZE = 2 * 1024 * 1024 * 1024;
+const MAX_UPLOAD_GB = Number(process.env.NEXT_PUBLIC_MAX_UPLOAD_GB || "20");
+const MAX_SIZE = MAX_UPLOAD_GB * 1024 * 1024 * 1024;
 const ACCEPTED = [".mp4", ".mov", ".mkv", ".webm", ".m4v"];
 
 export default function Home() {
@@ -139,7 +140,7 @@ export default function Home() {
     }
     if (next.size > MAX_SIZE) {
       setFile(null);
-      setError("This file is larger than the 2 GB application limit.");
+      setError(`This file is larger than the ${MAX_UPLOAD_GB} GB application limit.`);
       return;
     }
     if (next.size === 0) {
@@ -319,7 +320,7 @@ export default function Home() {
                 <button className="replace-button" onClick={() => input.current?.click()} disabled={busy}>Replace video</button>
               </div>
             )}
-            <div className="upload-foot"><span><i className="shield-icon">✓</i> Max file size: 2 GB</span><span>MP4 recommended</span></div>
+            <div className="upload-foot"><span><i className="shield-icon">✓</i> Max file size: {MAX_UPLOAD_GB} GB</span><span>MP4 recommended</span></div>
           </div>
 
           <div className="panel settings-panel">
