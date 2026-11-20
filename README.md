@@ -99,7 +99,7 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 - Responsive creator-focused interface.
 - Video selection and drag-and-drop upload.
 - Local video preview before upload.
-- File extension, empty-file and 2 GB application-limit validation.
+- File extension, empty-file and configured local upload-size validation (20 GiB default).
 - Backend connection indicator and refresh action.
 - Caption settings with a style sample preview.
 - Error and job status messages.
@@ -108,7 +108,7 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 
 | Setting | Current behaviour |
 |---|---|
-| Maximum upload size | 2 GB application limit |
+| Maximum upload size | 20 GB by default; configurable with `MAX_UPLOAD_GB` |
 | Accepted extensions | `.mp4`, `.mov`, `.mkv`, `.webm`, `.m4v` |
 | Segment duration | 60 seconds maximum |
 | Aspect ratio | 9:16 |
@@ -123,7 +123,7 @@ The browser receives a job ID after upload instead of waiting for the entire vid
 | Caption engine | faster-whisper, optional |
 | Job status polling | Every 3 seconds |
 
-The 2 GB application limit does not override the request-size, execution-time, memory, CPU or disk limits of the selected hosting provider.
+The configured local upload limit does not override the available disk space, memory, CPU or filesystem limits of the PC.
 
 ## How it works
 
@@ -472,7 +472,7 @@ The current job queue is in-memory and not durable. A backend restart, redeploy,
 
 ### Upload fails for large videos
 
-The app's maximum is 2 GB, but the hosting provider may impose a lower request-body limit or insufficient temporary disk. Check provider logs and resource limits.
+The default local maximum is 20 GB. Increase `MAX_UPLOAD_GB` and `NEXT_PUBLIC_MAX_UPLOAD_GB` together only if the PC has enough free disk space and memory.
 
 ## CI checks
 
