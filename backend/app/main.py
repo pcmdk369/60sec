@@ -201,7 +201,7 @@ async def _process_shorts(
                 segments = [(float(s.start), float(s.end), s.text.strip()) for s in recognized if s.text.strip()]
                 if not segments:
                     raise RuntimeError("No speech was detected in the source audio.")
-                target_languages = {"hindi": ("Hindi", {"hi", "ur"}), "spanish": ("Spanish", {"es"}), "chinese": ("Chinese", {"zh"}), "thai": ("Thai", {"th"}), "indonesian": ("Indonesian", {"id"})}
+                target_languages = {"hindi": ("Hindi", {"hi"}), "spanish": ("Spanish", {"es"}), "chinese": ("Chinese", {"zh"}), "thai": ("Thai", {"th"}), "indonesian": ("Indonesian", {"id"})}
                 if caption_language in target_languages:
                     target_name, source_codes = target_languages[caption_language]
                     if (info.language or "").lower() not in source_codes:
